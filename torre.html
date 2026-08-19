@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UBICA-TEC - Torre de Control</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="torre-estilos.css">
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <!-- PANTALLA DE LOGIN DE SEGURIDAD -->
+    <div id="pantallaLoginAdmin" class="login-overlay">
+        <div class="login-box">
+            <h2>UBICA-TEC</h2>
+            <p style="color:var(--text-secondary); margin-bottom:20px; font-size:14px;">Acceso restringido a Torre de Control</p>
+            <input type="text" id="loginUser" class="modal-input" placeholder="Usuario">
+            <input type="password" id="loginPass" class="modal-input" placeholder="Contraseña">
+            <button class="modal-btn-ok" style="width:100%; padding:15px; font-size:16px;" onclick="iniciarSesionTorre()">Ingresar al Sistema</button>
+        </div>
+    </div>
+
+    <!-- AUDIO INVISIBLE PARA LA LLAMADA -->
+    <audio id="audioLocalTorre" autoplay muted></audio>
+    <audio id="audioRemotoTorre" autoplay></audio>
+
+    <div id="mapa"></div>
+    <div id="toastContainer"></div>
+
+    <!-- MODAL LLAMADA EN CURSO -->
+    <div id="modalLlamadaActiva" class="modal-overlay" style="display:none;">
+        <div class="modal-box" style="border: 2px solid var(--primary);">
+            <h3 id="lblEstadoLlamada">Llamando a la unidad...</h3>
+            <div style="margin: 20px 0;">
+                <div class="icono-emergencia-punto" style="width:60px; height:60px; margin: 0 auto; animation: pulse 1s infinite;">📞</div>
+            </div>
+            <button class="modal-btn-cancel" style="width:100%; background:var(--danger); color:white; border:none;" onclick="colgarLlamadaTorre()">Finalizar Llamada</button>
+        </div>
+    </div>
+
+    <div id="customModal" class="modal-overlay" style="display:none;">
+        <div class="modal-box">
+            <h3 id="modalTitle">Mensaje</h3>
+            <p id="modalText"></p>
+            <input type="text" id="modalInput" class="modal-input" style="display:none;">
+            <div class="modal-buttons">
+                <button id="modalBtnCancel" class="modal-btn-cancel">Cancelar</button>
+                <button id="modalBtnOk" class="modal-btn-ok">Aceptar</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="header">
+        <h1>UBICA-TEC</h1>
+        <div class="contador">Unidades Activas: <span id="contadorCamiones">0</span></div>
+    </div>
+    
+    <div class="panel-lateral">
+        <div class="tabs-header">
+            <button class="tab-btn activo" id="btnTabMonitoreo" onclick="cambiarTab('monitoreo')">Unidades</button>
+            <button class="tab-btn" id="btnTabDashboard" onclick="cambiarTab('dashboard')">Métricas</button>
+            <button class="tab-btn" id="btnTabAjustes" onclick="cambiarTab('ajustes')">Ajustes</button>
+        </div>
+
+        <div id="tab-monitoreo" class="tab-content activo">
+            <div class="panel-superior">
+                <input type="text" id="inputBuscador" class="input-buscador" placeholder="Buscar matrícula o destino..." onkeyup="renderLista()">
+                <button class="btn-global" onclick="enviarMensajeGlobal()">Transmitir Alerta Global</button>
+            </div>
+
+            <div class="lista-scroll" id="listaUnidades"></div>
+
+            <div id="panelMulti" class="panel-multi">
+                <h3 id="lblMulti">Unidades: 0</h3>
+                <button class="btn-pivote" onclick="reasignarDestinoMultiple()">Asignar Posición Temporal</button>
+                <button class="btn-radio" onclick="enviarMensajeMultiple()">Enviar Mensaje</button>
+            </div>
+            
+            <div id="panelAcciones" class="panel-acciones">
+                <h3 id="tituloAccion">Unidad: --</h3>
+                <input type="text" id="inputVoz" class="input-tts" placeholder="Dictar instrucción...">
+                
+                <!-- BOTONES AGRUPADOS -->
+                <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                    <button class="btn-radio" style="flex:1; margin:0;" onclick="enviarMensajeTorre()">Mensaje Voz</button>
+                    <!-- EL BOTÓN DEL JUGUETE NUEVO -->
+                    <button class="btn-radio" style="flex:1; margin:0; background-color:#1d1c15;" onclick="iniciarLlamadaTorre()">📞 Llamar</button>
+                </div>
+                
+                <button class="btn-pivote" onclick="reasignarDestinoIndividual()">Asignar Posición Temporal</button>
+                <button class="btn-historial" onclick="abrirReproductor()">Auditoría de Ruta</button>
+                <button id="btnResolverAlerta" class="btn-resolver" style="display:none;" onclick="resolverAlertaTorre()">Normalizar Estado</button>
+                <button class="btn-eliminar" onclick="forzarSalidaTorre()">Forzar Cierre de Turno</button>
+            </div>
+        </div>
+
+        <div id="tab-dashboard" class="tab-content">
+            <div class="dash-container">
+                <div class="dash-card">
+                    <div class="dash-title">Total Operando</div>
+                    <div class="dash-value val-orange" id="dashTotal">0</div>
+                </div>
+                <div class="dash-card">
+                    <div class="dash-title">En Ocio (>3 Min)</div>
+                    <div class="dash-value" id="dashOcio" style="color: #ba68c8;">0</div>
+                </div>
+                <div class="dash-card">
+                    <div class="dash-title">Truck Time Prom.</div>
+                    <div class="dash-value" style="color: #38BDF8;" id="dashTruckTime">0m</div>
+                </div>
+                <div class="dash-card full-width">
+                    <div class="dash-title">Estado Operativo</div>
+                    <div style="height: 180px; width: 100%; display: flex; justify-content: center; margin-top: 10px;">
+                        <canvas id="graficaFlota"></canvas>
+                    </div>
+                </div>
+                <button class="btn-excel" onclick="exportarExcel()">Descargar Reporte (CSV)</button>
+            </div>
+        </div>
+
+        <div id="tab-ajustes" class="tab-content">
+            <div class="ajustes-seccion">
+                <h3>Visualización</h3>
+                <label style="font-size: 13px; font-weight: 600; display: flex; align-items: center; cursor: pointer; margin-bottom: 10px;">
+                    <input type="checkbox" id="chkNombresGeo" class="chk-multi" checked onchange="toggleNombresGeo()"> Nombres de Zonas
+                </label>
+            </div>
+            <div class="ajustes-seccion">
+                <h3>Posiciones del Patio</h3>
+                <button id="btnDibujarPos" class="btn-ajuste" onclick="iniciarDibujoPosicion()">Definir Posición</button>
+                <div id="listaPosicionesGuardadas"></div>
+            </div>
+            <div class="ajustes-seccion">
+                <h3>Puntos de Emergencia (SOS)</h3>
+                <button id="btnDibujarEmergencia" class="btn-ajuste" onclick="iniciarDibujoEmergencia()" style="border: 1px solid #ba1a1a; color: #ba1a1a;">Definir Emergencia</button>
+                <div id="listaEmergenciasGuardadas"></div>
+            </div>
+            <div class="ajustes-seccion">
+                <h3>Zonas Perimetrales</h3>
+                <button id="btnDibujarGeo" class="btn-ajuste" onclick="iniciarDibujoGeocerca()">Dibujar Zona</button>
+                <button id="btnGuardarGeo" class="btn-guardar-geo" style="display:none;" onclick="guardarGeocerca()">Guardar Polígono</button>
+                <div id="listaGeocercasGuardadas" style="margin-top:10px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- REPRODUCTOR -->
+    <div id="reproductorRutas" class="reproductor-rutas">
+        <div class="reproductor-header">
+            <h2 id="repPlaca">Auditoría: --</h2>
+            <div>
+                <input type="date" id="repFecha" class="input-fecha" onchange="cargarHistorialDia()">
+                <button class="btn-cerrar-rep" style="margin-left: 10px;" onclick="cerrarReproductor()">Cerrar</button>
+            </div>
+        </div>
+        <div class="reproductor-datos">
+            <div>Hora: <span id="repInfoHora">--:--</span></div>
+            <div>Vel: <span id="repInfoVel">-- km/h</span></div>
+            <div>Edo: <span id="repInfoEst">--</span></div>
+        </div>
+        <div class="reproductor-controles">
+            <button class="btn-play" id="btnPlayRep" onclick="togglePlayRep()">Play</button>
+            <input type="range" id="sliderRep" class="slider-tiempo" min="0" value="0" step="1" oninput="moverSliderRep()">
+        </div>
+    </div>
+
+    <script src="torre.js"></script>
+</body>
+</html>

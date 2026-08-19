@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>UBICA-TEC - Operador</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="estilos.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+</head>
+<body>
+    <div id="mapaFondo"></div>
+    <button id="btnCentrar" class="btn-centrar-mapa" onclick="centrarMapa()">GPS</button>
+
+    <!-- PANTALLA DE LLAMADA ENTRANTE -->
+    <div id="modalLlamadaOperador" class="modal-overlay" style="display:none; z-index:10000; background: rgba(29, 28, 21, 0.95);">
+        <div class="modal-box" style="background: transparent; box-shadow: none;">
+            <h2 id="lblLlamadaTit" style="color: white;">Llamada de Torre</h2>
+            <div style="margin: 30px 0;">
+                <div style="font-size: 60px; animation: pulse 1s infinite;">📡</div>
+            </div>
+            
+            <div id="botonesContestar" style="display:flex; gap:15px; margin-bottom: 20px;">
+                <button onclick="rechazarLlamada()" style="background:#ba1a1a; color:white; padding:15px; width:100%; border-radius:30px; font-weight:bold; border:none; font-size:16px;">Rechazar</button>
+                <button onclick="contestarLlamada()" style="background:#a4c900; color:#1d1c15; padding:15px; width:100%; border-radius:30px; font-weight:bold; border:none; font-size:16px;">Contestar</button>
+            </div>
+            <button id="btnColgarOp" onclick="rechazarLlamada()" style="display:none; background:#ba1a1a; color:white; padding:15px; width:100%; border-radius:30px; font-weight:bold; border:none; font-size:16px;">Finalizar Llamada</button>
+        </div>
+    </div>
+    
+    <!-- AUDIO INVISIBLE -->
+    <audio id="audioRemotoOperador" autoplay></audio>
+
+    <div id="customAlert" class="modal-overlay" style="display:none;">
+        <div class="modal-box">
+            <h3 id="alertTitle">Aviso</h3>
+            <p id="alertText">Mensaje</p>
+            <button class="modal-btn" onclick="document.getElementById('customAlert').style.display='none'">Entendido</button>
+        </div>
+    </div>
+
+    <div id="alertaMensaje">
+        <div style="color: #752305; font-weight: 800; font-size:11px; text-transform: uppercase; letter-spacing: 0.1em;">Señal de Torre</div>
+        <div id="textoMensaje" style="font-size: 18px; font-weight: 800; margin: 16px 0; color: #1d1c15; letter-spacing: -0.02em;"></div>
+        <button style="background-color: var(--text-primary); padding:14px;" onclick="document.getElementById('alertaMensaje').style.display = 'none';">Confirmar Recepción</button>
+    </div>
+
+    <div class="card" id="pantallaSeleccion">
+        <h2>UBICA-TEC</h2>
+        <button class="btn-gordo btn-foraneo" onclick="seleccionarPerfil('FORANEO')">Flujo Foráneo</button>
+        <button class="btn-gordo btn-interno" onclick="seleccionarPerfil('INTERNO')">Operación Interna</button>
+    </div>
+
+    <div class="card" id="pantallaLogin" style="display: none; overflow-y: auto; max-height: 90vh;">
+        <button class="btn-atras" onclick="volverSeleccion()">Regresar</button>
+        <h2 id="tituloLogin">Registro</h2>
+        <input type="text" id="placaInput" placeholder="Matrícula / Eco">
+        <input type="text" id="posicionInput" placeholder="Destino (Ej. A0 03)">
+        
+        <select id="subtipoInput" style="display:none;">
+            <option value="Operacion Buque">Operación Buque</option>
+            <option value="Housekeeping">Housekeeping</option>
+            <option value="Traslado">Traslado Interno</option>
+        </select>
+
+        <input type="text" id="empleadoInput" placeholder="ID Empleado" style="display:none;">
+        <input type="text" id="buqueInput" placeholder="Buque Asignado" style="display:none;">
+        <input type="text" id="stsInput" placeholder="Grúa STS" style="display:none;">
+        
+        <button class="btn-entrar" id="btnIngresar" onclick="iniciarRastreo()">Validar Ingreso</button>
+    </div>
+
+    <div id="pantallaActiva" style="display: none;">
+        <div style="width: 100%; max-width: 400px; text-align: center;">
+            <div class="texto-placa" id="lblPlaca">--</div>
+            <div class="texto-destino" id="lblDestino">--</div>
+            <div class="texto-tiempo" id="lblTiempo">Flujo: 0 min</div>
+            
+            <div id="botoneraInterna" style="display: none; width: 100%;">
+                <button id="btnBano" style="background-color: #ffca28; color: #752305; box-shadow: 0 4px 15px rgba(255, 202, 40, 0.3);" onclick="toggleBano()">Baño</button>
+                <button style="background-color: #f57f17; box-shadow: 0 4px 15px rgba(245, 127, 23, 0.3);" onclick="cambiarEstado('pager', 'Falla de Pager')">Falla Pager</button>
+            </div>
+
+            <button class="btn-auxilio" onclick="cambiarEstado('emergencia', 'AUXILIO REQUERIDO')">Emergencia</button>
+            <button id="btnFinalizarTurno" class="btn-salir" onclick="salirRastreo(false)">Finalizar Turno</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
