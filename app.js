@@ -7,6 +7,35 @@ let coordenadasBahias = {}; let poligonoTerminal = []; let fueraDeTerminalMinuto
 db.ref('configuracion/posiciones').on('value', snap => { coordenadasBahias = {}; if(snap.val()) { for(let key in snap.val()) coordenadasBahias[snap.val()[key].nombre.toUpperCase()] = snap.val()[key].coordenadas; } });
 db.ref('configuracion/geocercas').on('value', snap => { poligonoTerminal = []; if(snap.val()) { for(let key in snap.val()) { if(snap.val()[key].nombre.toUpperCase().trim() === 'TERMINAL') { poligonoTerminal = snap.val()[key].coordenadas; } } } });
 
+// ==========================================
+// 🛰️ INTEGRACIÓN GPS J16 (FÍSICO - VPS UBICA-TEC)
+// ==========================================
+let marcadorJ16Fisico = null;
+db.ref('Flota_Activa/J16-PRUEBA').on('value', snap => {
+    const gpsData = snap.val();
+    if (!gpsData) return;
+
+    const latJ16 = gpsData.latitud;
+    const lngJ16 = gpsData.longitud;
+    const velocidadJ16 = gpsData.velocidad || 0;
+
+    console.log(`[J16 EN VIVO] Lat: ${latJ16}, Lng: ${lngJ16}, Vel: ${velocidadJ16} km/h`);
+
+    if (typeof mapa !== 'undefined' && mapa) {
+        if (marcadorJ16Fisico) {
+            marcadorJ16Fisico.setLatLng([latJ16, lngJ16]);
+        } else {
+            marcadorJ16Fisico = L.circleMarker([latJ16, lngJ16], { 
+                radius: 10, 
+                fillColor: "#FF5722", 
+                color: "#FFFFFF", 
+                weight: 2, 
+                fillOpacity: 1 
+            }).addTo(mapa).bindPopup("<b>GPS Físico J16 (Trackerking)</b>");
+        }
+    }
+});
+
 function estaDentroDelPoligono(punto, poligono) {
     let x = punto[0], y = punto[1]; let adentro = false;
     for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
@@ -128,10 +157,9 @@ function iniciarRastreo() {
         if (data.estado && data.estado !== estadoOperativo) { estadoOperativo = data.estado; if(estadoOperativo === 'activo') { document.getElementById('btnBano').style.backgroundColor = '#ffca28'; document.getElementById('btnBano').style.color = '#752305'; document.getElementById('btnBano').innerText = "Baño"; ultimaVezMovimiento = Date.now(); } actualizarUIOperador(); }
     });
 
-    // ACTIVACIÓN DE LLAMADAS ENTRANTE WEBRTC
     db.ref(`llamadas/${placaGlobal}`).on('value', snap => {
         const callData = snap.val();
-        if(!callData) { rechazarLlamada(true); return; } // La torre colgó
+        if(!callData) { rechazarLlamada(true); return; } 
         
         if (callData.offer && !pcOp) {
             document.getElementById('lblLlamadaTit').innerText = "Llamada de Torre...";
@@ -179,9 +207,6 @@ async function salirRastreo(esAutomatico) {
     if(esAutomatico) alert("Has salido de la Terminal TEC. Sesión cerrada."); window.location.reload(); 
 }
 
-// ==========================================
-// 📞 SISTEMA WEBRTC (OPERADOR)
-// ==========================================
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 let localStreamOp;
 let pcOp;
@@ -208,7 +233,6 @@ window.contestarLlamada = async function() {
 
         db.ref(`llamadas/${placaGlobal}`).update({ answer: { type: answer.type, sdp: answer.sdp } });
 
-        // Recibir red ICE de la Torre
         db.ref(`llamadas/${placaGlobal}/callerCandidates`).on('child_added', snap => {
             if(snap.val()) pcOp.addIceCandidate(new RTCIceCandidate(snap.val()));
         });
