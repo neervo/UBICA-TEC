@@ -10,28 +10,39 @@ db.ref('configuracion/geocercas').on('value', snap => { poligonoTerminal = []; i
 // ==========================================
 // 🛰️ INTEGRACIÓN GPS J16 (FÍSICO - VPS UBICA-TEC)
 // ==========================================
-let marcadorJ16Fisico = null;
-db.ref('Flota_Activa/J16-PRUEBA').on('value', snap => {
-    const gpsData = snap.val();
-    if (!gpsData) return;
+let marcadoresFlotaFisica = {};
 
-    const latJ16 = gpsData.latitud;
-    const lngJ16 = gpsData.longitud;
-    const velocidadJ16 = gpsData.velocidad || 0;
+db.ref('Flota_Activa').on('value', snap => {
+    const flota = snap.val();
+    if (!flota) return;
 
-    console.log(`[J16 EN VIVO] Lat: ${latJ16}, Lng: ${lngJ16}, Vel: ${velocidadJ16} km/h`);
+    // Recorremos todos los dispositivos reportando en Flota_Activa
+    for (let id in flota) {
+        const gpsData = flota[id];
+        if (!gpsData.latitud || !gpsData.longitud) continue;
 
-    if (typeof mapa !== 'undefined' && mapa) {
-        if (marcadorJ16Fisico) {
-            marcadorJ16Fisico.setLatLng([latJ16, lngJ16]);
-        } else {
-            marcadorJ16Fisico = L.circleMarker([latJ16, lngJ16], { 
-                radius: 10, 
-                fillColor: "#FF5722", 
-                color: "#FFFFFF", 
-                weight: 2, 
-                fillOpacity: 1 
-            }).addTo(mapa).bindPopup("<b>GPS Físico J16 (Trackerking)</b>");
+        const lat = gpsData.latitud;
+        const lng = gpsData.longitud;
+
+        console.log(`[GPS VIVO - ${id}] Lat: ${lat}, Lng: ${lng}`);
+
+        if (typeof mapa !== 'undefined' && mapa) {
+            if (marcadoresFlotaFisica[id]) {
+                // Si el marcador ya existe, solo actualizamos su posición suavemente
+                marcadoresFlotaFisica[id].setLatLng([lat, lng]);
+            } else {
+                // Si es nuevo, creamos un marcador llamativo color naranja en el mapa
+                marcadoresFlotaFisica[id] = L.circleMarker([lat, lng], { 
+                    radius: 12, 
+                    fillColor: "#FF5722", 
+                    color: "#FFFFFF", 
+                    weight: 3, 
+                    fillOpacity: 1 
+                }).addTo(mapa).bindPopup(`<b>GPS Físico: ${id}</b><br>Velocidad: ${gpsData.velocidad || 0} km/h`);
+                
+                // Centramos la vista del mapa la primera vez que aparezca
+                mapa.setView([lat, lng], 17);
+            }
         }
     }
 });
