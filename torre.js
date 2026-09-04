@@ -310,37 +310,3 @@ window.colgarLlamadaTorre = function(remoto = false) {
     if(localStreamTorre) { localStreamTorre.getTracks().forEach(t => t.stop()); localStreamTorre = null; }
     document.getElementById('modalLlamadaActiva').style.display = 'none';
 };
-
-// ==========================================
-// 🛰️ INTEGRACIÓN GPS FÍSICO J16 (TORRE DE CONTROL)
-// ==========================================
-let marcadoresFlotaFisica = {};
-
-if (typeof db !== 'undefined' && typeof mapa !== 'undefined') {
-    db.ref('Flota_Activa').on('value', snap => {
-        const flota = snap.val();
-        if (!flota) return;
-
-        for (let id in flota) {
-            const gpsData = flota[id];
-            if (!gpsData.latitud || !gpsData.longitud) continue;
-
-            const lat = gpsData.latitud;
-            const lng = gpsData.longitud;
-
-            if (marcadoresFlotaFisica[id]) {
-                marcadoresFlotaFisica[id].setLatLng([lat, lng]);
-            } else {
-                marcadoresFlotaFisica[id] = L.circleMarker([lat, lng], { 
-                    radius: 14, 
-                    fillColor: "#FF5722", 
-                    color: "#FFFFFF", 
-                    weight: 3, 
-                    fillOpacity: 1 
-                }).addTo(mapa).bindPopup(`<b>GPS Físico: ${id}</b><br>Velocidad: ${gpsData.velocidad || 0} km/h<br>Estado: ${gpsData.status || 'Activo'}`);
-                
-                mapa.setView([lat, lng], 17);
-            }
-        }
-    });
-}
