@@ -7,42 +7,6 @@ let coordenadasBahias = {}; let poligonoTerminal = []; let fueraDeTerminalMinuto
 db.ref('configuracion/posiciones').on('value', snap => { coordenadasBahias = {}; if(snap.val()) { for(let key in snap.val()) coordenadasBahias[snap.val()[key].nombre.toUpperCase()] = snap.val()[key].coordenadas; } });
 db.ref('configuracion/geocercas').on('value', snap => { poligonoTerminal = []; if(snap.val()) { for(let key in snap.val()) { if(snap.val()[key].nombre.toUpperCase().trim() === 'TERMINAL') { poligonoTerminal = snap.val()[key].coordenadas; } } } });
 
-// ==========================================
-// 🛰️ INTEGRACIÓN GPS J16 (FÍSICO - VPS UBICA-TEC)
-// ==========================================
-let marcadoresFlotaFisica = {};
-
-db.ref('Flota_Activa').on('value', snap => {
-    const flota = snap.val();
-    if (!flota) return;
-
-    for (let id in flota) {
-        const gpsData = flota[id];
-        if (!gpsData.latitud || !gpsData.longitud) continue;
-
-        const lat = gpsData.latitud;
-        const lng = gpsData.longitud;
-
-        console.log(`[GPS FÍSICO - ${id}] Lat: ${lat}, Lng: ${lng}`);
-
-        if (typeof mapa !== 'undefined' && mapa) {
-            if (marcadoresFlotaFisica[id]) {
-                marcadoresFlotaFisica[id].setLatLng([lat, lng]);
-            } else {
-                marcadoresFlotaFisica[id] = L.circleMarker([lat, lng], { 
-                    radius: 12, 
-                    fillColor: "#FF5722", 
-                    color: "#FFFFFF", 
-                    weight: 3, 
-                    fillOpacity: 1 
-                }).addTo(mapa).bindPopup(`<b>GPS Físico: ${id}</b><br>Velocidad: ${gpsData.velocidad || 0} km/h`);
-                
-                mapa.setView([lat, lng], 17);
-            }
-        }
-    }
-});
-
 function estaDentroDelPoligono(punto, poligono) {
     let x = punto[0], y = punto[1]; let adentro = false;
     for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
@@ -164,9 +128,10 @@ function iniciarRastreo() {
         if (data.estado && data.estado !== estadoOperativo) { estadoOperativo = data.estado; if(estadoOperativo === 'activo') { document.getElementById('btnBano').style.backgroundColor = '#ffca28'; document.getElementById('btnBano').style.color = '#752305'; document.getElementById('btnBano').innerText = "Baño"; ultimaVezMovimiento = Date.now(); } actualizarUIOperador(); }
     });
 
+    // ACTIVACIÓN DE LLAMADAS ENTRANTE WEBRTC
     db.ref(`llamadas/${placaGlobal}`).on('value', snap => {
         const callData = snap.val();
-        if(!callData) { rechazarLlamada(true); return; } 
+        if(!callData) { rechazarLlamada(true); return; } // La torre colgó
         
         if (callData.offer && !pcOp) {
             document.getElementById('lblLlamadaTit').innerText = "Llamada de Torre...";
@@ -180,12 +145,7 @@ function iniciarRastreo() {
     if ("geolocation" in navigator) {
         watchId = navigator.geolocation.watchPosition(pos => {
             if (expulsado) return;
-            
-            // FILTRO RELAJADO Y CON LOG PARA VER SI ESTÁ FALLANDO EL GPS
-            if (pos.coords.accuracy > 5000) {
-                console.warn("⚠️ GPS detectado, pero es muy impreciso (Metros de error: " + pos.coords.accuracy + "). Acércate a una ventana o sal a la calle.");
-                return; 
-            }
+            if (pos.coords.accuracy > 3000) return; 
 
             latActual = pos.coords.latitude; lngActual = pos.coords.longitude;
             velActual = ((pos.coords.speed || 0) * 3.6).toFixed(1);
@@ -198,18 +158,12 @@ function iniciarRastreo() {
                 else { marcadorMia = L.circleMarker([latActual, lngActual], { radius: 8, fillColor: "#38BDF8", color: "white", weight: 2, fillOpacity: 1 }).addTo(mapa); mapa.setView([latActual, lngActual], 18); }
             }
 
-            console.log(`✅ Coordenadas listas para Firebase: ${latActual}, ${lngActual}`);
-
             db.ref('camiones_en_patio/' + placaGlobal).update({
                 lat: latActual, lng: lngActual, placa: placaGlobal, tipo: tipoGlobal, subtipo: subtipoGlobal, estado: estadoOperativo,
                 destino: destinoGlobal, buque: buqueGlobal, sts: stsGlobal, empleado: empleadoGlobal, hora_ingreso: horaIngreso, velocidad_actual: velActual
             }).then(() => { primerRegistroExitoso = true; });
 
-        }, err => {
-            console.error("❌ Error de GPS nativo: ", err.message);
-        }, { enableHighAccuracy: true, maximumAge: 0 });
-    } else {
-        console.error("Este dispositivo no soporta GPS.");
+        }, err => {}, { enableHighAccuracy: true, maximumAge: 0 });
     }
 }
 
@@ -225,6 +179,9 @@ async function salirRastreo(esAutomatico) {
     if(esAutomatico) alert("Has salido de la Terminal TEC. Sesión cerrada."); window.location.reload(); 
 }
 
+// ==========================================
+// 📞 SISTEMA WEBRTC (OPERADOR)
+// ==========================================
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 let localStreamOp;
 let pcOp;
@@ -251,6 +208,7 @@ window.contestarLlamada = async function() {
 
         db.ref(`llamadas/${placaGlobal}`).update({ answer: { type: answer.type, sdp: answer.sdp } });
 
+        // Recibir red ICE de la Torre
         db.ref(`llamadas/${placaGlobal}/callerCandidates`).on('child_added', snap => {
             if(snap.val()) pcOp.addIceCandidate(new RTCIceCandidate(snap.val()));
         });
