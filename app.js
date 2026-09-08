@@ -16,7 +16,6 @@ db.ref('Flota_Activa').on('value', snap => {
     const flota = snap.val();
     if (!flota) return;
 
-    // Recorremos todos los dispositivos reportando en Flota_Activa
     for (let id in flota) {
         const gpsData = flota[id];
         if (!gpsData.latitud || !gpsData.longitud) continue;
@@ -24,14 +23,12 @@ db.ref('Flota_Activa').on('value', snap => {
         const lat = gpsData.latitud;
         const lng = gpsData.longitud;
 
-        console.log(`[GPS VIVO - ${id}] Lat: ${lat}, Lng: ${lng}`);
+        console.log(`[GPS FÍSICO - ${id}] Lat: ${lat}, Lng: ${lng}`);
 
         if (typeof mapa !== 'undefined' && mapa) {
             if (marcadoresFlotaFisica[id]) {
-                // Si el marcador ya existe, solo actualizamos su posición suavemente
                 marcadoresFlotaFisica[id].setLatLng([lat, lng]);
             } else {
-                // Si es nuevo, creamos un marcador llamativo color naranja en el mapa
                 marcadoresFlotaFisica[id] = L.circleMarker([lat, lng], { 
                     radius: 12, 
                     fillColor: "#FF5722", 
@@ -40,7 +37,6 @@ db.ref('Flota_Activa').on('value', snap => {
                     fillOpacity: 1 
                 }).addTo(mapa).bindPopup(`<b>GPS Físico: ${id}</b><br>Velocidad: ${gpsData.velocidad || 0} km/h`);
                 
-                // Centramos la vista del mapa la primera vez que aparezca
                 mapa.setView([lat, lng], 17);
             }
         }
@@ -184,7 +180,12 @@ function iniciarRastreo() {
     if ("geolocation" in navigator) {
         watchId = navigator.geolocation.watchPosition(pos => {
             if (expulsado) return;
-            if (pos.coords.accuracy > 3000) return; 
+            
+            // FILTRO RELAJADO Y CON LOG PARA VER SI ESTÁ FALLANDO EL GPS
+            if (pos.coords.accuracy > 5000) {
+                console.warn("⚠️ GPS detectado, pero es muy impreciso (Metros de error: " + pos.coords.accuracy + "). Acércate a una ventana o sal a la calle.");
+                return; 
+            }
 
             latActual = pos.coords.latitude; lngActual = pos.coords.longitude;
             velActual = ((pos.coords.speed || 0) * 3.6).toFixed(1);
@@ -197,12 +198,18 @@ function iniciarRastreo() {
                 else { marcadorMia = L.circleMarker([latActual, lngActual], { radius: 8, fillColor: "#38BDF8", color: "white", weight: 2, fillOpacity: 1 }).addTo(mapa); mapa.setView([latActual, lngActual], 18); }
             }
 
+            console.log(`✅ Coordenadas listas para Firebase: ${latActual}, ${lngActual}`);
+
             db.ref('camiones_en_patio/' + placaGlobal).update({
                 lat: latActual, lng: lngActual, placa: placaGlobal, tipo: tipoGlobal, subtipo: subtipoGlobal, estado: estadoOperativo,
                 destino: destinoGlobal, buque: buqueGlobal, sts: stsGlobal, empleado: empleadoGlobal, hora_ingreso: horaIngreso, velocidad_actual: velActual
             }).then(() => { primerRegistroExitoso = true; });
 
-        }, err => {}, { enableHighAccuracy: true, maximumAge: 0 });
+        }, err => {
+            console.error("❌ Error de GPS nativo: ", err.message);
+        }, { enableHighAccuracy: true, maximumAge: 0 });
+    } else {
+        console.error("Este dispositivo no soporta GPS.");
     }
 }
 
