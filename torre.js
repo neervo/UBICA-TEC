@@ -216,26 +216,61 @@ window.renderLista = function() {
     listaUnidades.innerHTML = vistaFinal; document.getElementById('contadorCamiones').innerText = totalUnidades; actualizarDashboard();
 }
 
+// ---------------------------------------------------------
+// ESCUCHAS DE FIREBASE CORREGIDAS
+// ---------------------------------------------------------
 db.ref('camiones_en_patio').on('child_added', snap => {
-    dataGlobal[snap.key] = snap.val(); let c = dataGlobal[snap.key];
-    marcadoresCamiones[snap.key] = L.marker([c.lat, c.lng], { icon: getIcono(c.tipo, c.subtipo, c.estado) }).addTo(mapa);
-    marcadoresCamiones[snap.key].on('click', () => seleccionarCamion(snap.key, c.estado)); marcadoresCamiones[snap.key].estadoGuardado = c.estado; renderLista();
+    dataGlobal[snap.key] = snap.val(); 
+    let c = dataGlobal[snap.key];
+    if (c && c.lat && c.lng) {
+        marcadoresCamiones[snap.key] = L.marker([c.lat, c.lng], { icon: getIcono(c.tipo, c.subtipo, c.estado) }).addTo(mapa);
+        marcadoresCamiones[snap.key].on('click', () => seleccionarCamion(snap.key, c.estado)); 
+        marcadoresCamiones[snap.key].estadoGuardado = c.estado; 
+        renderLista();
+    }
 });
+
 db.ref('camiones_en_patio').on('child_changed', snap => {
-    dataGlobal[snap.key] = snap.val(); let c = dataGlobal[snap.key];
-    if (marcadoresCamiones[snap.key]) { marcadoresCamiones[snap.key].setLatLng([c.lat, c.lng]); if (marcadoresCamiones[snap.key].estadoGuardado !== c.estado) { marcadoresCamiones[snap.key].setIcon(getIcono(c.tipo, c.subtipo, c.estado)); marcadoresCamiones[snap.key].estadoGuardado = c.estado; if(camionSeleccionado === snap.key) seleccionarCamion(snap.key, c.estado); } } renderLista();
+    dataGlobal[snap.key] = snap.val(); 
+    let c = dataGlobal[snap.key];
+    if (marcadoresCamiones[snap.key] && c && c.lat && c.lng) { 
+        marcadoresCamiones[snap.key].setLatLng([c.lat, c.lng]); 
+        if (marcadoresCamiones[snap.key].estadoGuardado !== c.estado) { 
+            marcadoresCamiones[snap.key].setIcon(getIcono(c.tipo, c.subtipo, c.estado)); 
+            marcadoresCamiones[snap.key].estadoGuardado = c.estado; 
+            if(camionSeleccionado === snap.key) seleccionarCamion(snap.key, c.estado); 
+        } 
+    } 
+    renderLista();
 });
+
 db.ref('camiones_en_patio').on('child_removed', snap => {
-    const placa = snap.key; const camionInfo = snap.val(); delete dataGlobal[placa];
-    if (marcadoresCamiones[placa]) { mapa.removeLayer(marcadoresCamiones[placa]); delete marcadoresCamiones[placa]; }
-    if(camionSeleccionado === placa) { camionSeleccionado = null; document.getElementById('panelAcciones').style.display = 'none'; }
-    if(seleccionadosMulti.has(placa)) { seleccionadosMulti.delete(placa); actualizarPanelMulti(); }
+    const placa = snap.key; 
+    const camionInfo = snap.val(); 
+    delete dataGlobal[placa];
+    
+    if (marcadoresCamiones[placa]) { 
+        mapa.removeLayer(marcadoresCamiones[placa]); 
+        delete marcadoresCamiones[placa]; 
+    }
+    
+    if(camionSeleccionado === placa) { 
+        camionSeleccionado = null; 
+        document.getElementById('panelAcciones').style.display = 'none'; 
+    }
+    
+    if(seleccionadosMulti.has(placa)) { 
+        seleccionadosMulti.delete(placa); 
+        actualizarPanelMulti(); 
+    }
+    
     if(camionInfo) {
-        let min = Math.floor((Date.now() - (camionInfo.hora_ingreso||Date.now())) / 60000); camionInfo.minutos_totales = min; camionInfo.hora_salida = Date.now();
+        let min = Math.floor((Date.now() - (camionInfo.hora_ingreso || Date.now())) / 60000); 
+        camionInfo.minutos_totales = min; 
+        camionInfo.hora_salida = Date.now();
         const fechaHoy = new Date().toISOString().split('T')[0];
         db.ref(`viajes_finalizados/${fechaHoy}/${placa}_${Date.now()}`).set(camionInfo);
         
-        // TOAST SOLO PARA APLICABLES A TRUCK TIME
         if(camionInfo.tipo === 'FORANEO' || (camionInfo.tipo === 'INTERNO' && camionInfo.subtipo === 'Traslado')) {
             showToast(`Unidad ${placa} finalizó flujo. Truck Time: ${min} min`);
         }
@@ -253,7 +288,6 @@ window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.get
 window.togglePlayRep = function() { const btn = document.getElementById('btnPlayRep'); if(timerHistorial) { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } else { btn.innerText = "Pausa"; timerHistorial = setInterval(() => { let val = parseInt(document.getElementById('sliderRep').value); if(val < datosHistorial.length - 1) { document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); } else { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } }, 800); } };
 function limpiarRutaMapa() { if(polylineHistorial) mapa.removeLayer(polylineHistorial); if(marcadorHistorial) mapa.removeLayer(marcadorHistorial); polylineHistorial = null; marcadorHistorial = null; if(timerHistorial) clearInterval(timerHistorial); timerHistorial = null; document.getElementById('btnPlayRep').innerText = "Play"; }
 window.cerrarReproductor = function() { limpiarRutaMapa(); document.getElementById('reproductorRutas').style.display = 'none'; datosHistorial = []; mapa.setView([19.066, -104.295], 16); };
-
 
 // ==========================================
 // 📞 SISTEMA WEBRTC (LLAMADAS P2P GRATUITAS)
