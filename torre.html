@@ -61,15 +61,15 @@
         <div class="contador">Unidades Activas: <span id="contadorCamiones">0</span></div>
     </div>
     
-    <div class="panel-lateral">
+<div class="panel-lateral">
         <div class="tabs-header">
             <button class="tab-btn activo" id="btnTabMonitoreo" onclick="cambiarTab('monitoreo')">Unidades</button>
             <button class="tab-btn" id="btnTabDashboard" onclick="cambiarTab('dashboard')">Métricas</button>
             <button class="tab-btn" id="btnTabAjustes" onclick="cambiarTab('ajustes')">Ajustes</button>
         </div>
         
-        <!-- Botón de Historial limpio y alineado al ancho del panel -->
-        <button onclick="abrirReproductor()" style="margin: 10px 15px; width: calc(100% - 30px); background-color: #3b82f6; color: white; padding: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer;">🔍 Buscar Ruta Histórica</button>
+        <!-- Botón de Historial actualizado con la función Global -->
+        <button onclick="abrirReproductorGlobal()" style="margin: 10px 15px; width: calc(100% - 30px); background-color: #3b82f6; color: white; padding: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer;">🔍 Buscar Ruta Histórica</button>
 
         <div id="tab-monitoreo" class="tab-content activo">
             <div class="panel-superior">
@@ -156,10 +156,10 @@
 <!-- REPRODUCTOR -->
     <div id="reproductorRutas" class="reproductor-rutas">
         <div class="reproductor-header">
-            <!-- CAMBIO: Agregamos un input para escribir la placa y un botón para buscar -->
             <div style="display: flex; align-items: center; gap: 10px;">
-                <h2 id="repPlaca" style="margin:0;">Auditoría:</h2>
-                <input type="text" id="inputPlacaHistorial" class="input-buscador" placeholder="Escribe Placa..." style="width: 120px; padding: 5px; font-size: 14px;" onkeyup="this.value = this.value.toUpperCase()">
+                <h2 style="margin:0; font-size: 16px;">Auditoría:</h2>
+                <!-- Caja de texto para escribir la placa a mano -->
+                <input type="text" id="inputPlacaHistorial" class="input-buscador" placeholder="Ej. PORDIOS" style="width: 110px; padding: 5px; font-size: 14px;" onkeyup="this.value = this.value.toUpperCase()">
                 <button class="btn-resolver" style="padding: 5px 10px; margin:0;" onclick="cargarHistorialDia()">Buscar</button>
             </div>
             <div>
@@ -177,7 +177,6 @@
             <input type="range" id="sliderRep" class="slider-tiempo" min="0" value="0" step="1" oninput="moverSliderRep()">
         </div>
     </div>
-
     <script src="torre.js"></script>
 </body>
 </html>
