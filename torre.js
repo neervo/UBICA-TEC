@@ -245,15 +245,47 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
 
 // HISTORIAL REPRODUCTOR MANTIENE IGUAL
 let datosHistorial = [], polylineHistorial = null, marcadorHistorial = null, timerHistorial = null;
-window.abrirReproductor = function() { if (!camionSeleccionado) return; document.getElementById('reproductorRutas').style.display = 'block'; document.getElementById('repPlaca').innerText = "Historial: " + camionSeleccionado; document.getElementById('repFecha').value = new Date().toISOString().split('T')[0]; cargarHistorialDia(); };
-window.cargarHistorialDia = function() { const fecha = document.getElementById('repFecha').value; if(!fecha || !camionSeleccionado) return; limpiarRutaMapa(); document.getElementById('repInfoHora').innerText = "..."; db.ref(`historial_rutas/${fecha}/${camionSeleccionado}`).once('value', snap => { if(!snap.val()) { document.getElementById('repInfoHora').innerText = "--:--"; return mostrarModal("Vacio", "Sin registros."); } datosHistorial = Object.values(snap.val()).sort((a,b) => a.time - b.time); if(datosHistorial.length === 0) return; document.getElementById('sliderRep').max = datosHistorial.length - 1; document.getElementById('sliderRep').value = 0; dibujarLineaHistorial(); actualizarDatosSlider(0); }); };
-function dibujarLineaHistorial() { const ptos = datosHistorial.map(p => [p.lat, p.lng]); polylineHistorial = L.polyline(ptos, {color: '#FF5E3A', weight: 4, opacity: 0.8, dashArray: '8, 8'}).addTo(mapa); mapa.fitBounds(polylineHistorial.getBounds(), {padding: [50, 50]}); const ghostIcon = L.divIcon({ className: '', html: `<div class="icono-base icono-fantasma"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }); marcadorHistorial = L.marker(ptos[0], {icon: ghostIcon, zIndexOffset: 1000}).addTo(mapa); }
-window.actualizarDatosSlider = function(index) { if(datosHistorial.length === 0) return; const punto = datosHistorial[index]; marcadorHistorial.setLatLng([punto.lat, punto.lng]); document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); };
-window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
-window.togglePlayRep = function() { const btn = document.getElementById('btnPlayRep'); if(timerHistorial) { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } else { btn.innerText = "Pausa"; timerHistorial = setInterval(() => { let val = parseInt(document.getElementById('sliderRep').value); if(val < datosHistorial.length - 1) { document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); } else { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } }, 800); } };
-function limpiarRutaMapa() { if(polylineHistorial) mapa.removeLayer(polylineHistorial); if(marcadorHistorial) mapa.removeLayer(marcadorHistorial); polylineHistorial = null; marcadorHistorial = null; if(timerHistorial) clearInterval(timerHistorial); timerHistorial = null; document.getElementById('btnPlayRep').innerText = "Play"; }
-window.cerrarReproductor = function() { limpiarRutaMapa(); document.getElementById('reproductorRutas').style.display = 'none'; datosHistorial = []; mapa.setView([19.066, -104.295], 16); };
+window.abrirReproductor = function() { 
+    document.getElementById('reproductorRutas').style.display = 'block';
+    document.getElementById('repFecha').value = new Date().toISOString().split('T')[0];
+    
+    // Si hay un camión seleccionado previamente, rellenamos la caja de texto automáticamente
+    if (camionSeleccionado) {
+        document.getElementById('inputPlacaHistorial').value = camionSeleccionado;
+        cargarHistorialDia();
+    } else {
+        document.getElementById('inputPlacaHistorial').value = '';
+        document.getElementById('repInfoHora').innerText = "--:--";
+    }
+};
 
+window.cargarHistorialDia = function() { 
+    const fecha = document.getElementById('repFecha').value;
+    const placaInput = document.getElementById('inputPlacaHistorial').value.trim().toUpperCase();
+    
+    if (!fecha || !placaInput) {
+        return alert("Ingresa una fecha y una matrícula válida.");
+    }
+    
+    limpiarRutaMapa(); 
+    document.getElementById('repInfoHora').innerText = "..."; 
+    
+    // Consulta directamente en la carpeta histórica organizada por fecha y placa
+    db.ref(`historial_rutas/${fecha}/${placaInput}`).once('value', snap => { 
+        if(!snap.val()) { 
+            document.getElementById('repInfoHora').innerText = "--:--"; 
+            return mostrarModal("Vacío", "No hay registros para esta unidad en la fecha seleccionada."); 
+        } 
+        
+        datosHistorial = Object.values(snap.val()).sort((a,b) => a.time - b.time); 
+        if(datosHistorial.length === 0) return; 
+        
+        document.getElementById('sliderRep').max = datosHistorial.length - 1; 
+        document.getElementById('sliderRep').value = 0; 
+        dibujarLineaHistorial(); 
+        actualizarDatosSlider(0); 
+    }); 
+};
 
 // ==========================================
 // 📞 SISTEMA WEBRTC (LLAMADAS P2P GRATUITAS)
