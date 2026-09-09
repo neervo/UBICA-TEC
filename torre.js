@@ -310,27 +310,18 @@ window.colgarLlamadaTorre = function(remoto = false) {
     if(localStreamTorre) { localStreamTorre.getTracks().forEach(t => t.stop()); localStreamTorre = null; }
     document.getElementById('modalLlamadaActiva').style.display = 'none';
 };
-};
 
-window.colgarLlamadaTorre = function(remoto = false) {
-    if(camionSeleccionado && !remoto) db.ref(`llamadas/${camionSeleccionado}`).remove();
-    if(unsubscribeWebRTC && camionSeleccionado) db.ref(`llamadas/${camionSeleccionado}`).off('value', unsubscribeWebRTC);
-    if(pcTorre) { pcTorre.close(); pcTorre = null; }
-    if(localStreamTorre) { localStreamTorre.getTracks().forEach(t => t.stop()); localStreamTorre = null; }
-    document.getElementById('modalLlamadaActiva').style.display = 'none';
-};
 // LIMPIEZA AUTOMÁTICA DE HISTORIAL (Conserva solo los últimos 3 días)
 function purgarHistorialAntiguo() {
     const hoy = new Date();
     db.ref('historial_rutas').once('value', snap => {
         if (!snap.val()) return;
-        const fechasRegistradas = Object.keys(snap.val()); // Ej: ["2026-09-06", "2026-09-07", "2026-09-08"]
+        const fechasRegistradas = Object.keys(snap.val()); 
         
         fechasRegistradas.forEach(fechaStr => {
             const fechaCarpeta = new Date(fechaStr);
             const diferenciaDias = Math.floor((hoy - fechaCarpeta) / (1000 * 60 * 60 * 24));
             
-            // Si la carpeta de la ruta tiene más de 3 días de antigüedad, se borra de Firebase
             if (diferenciaDias > 3) {
                 db.ref(`historial_rutas/${fechaStr}`).remove();
             }
