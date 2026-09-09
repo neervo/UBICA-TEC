@@ -150,10 +150,15 @@
         </div>
     </div>
 
-    <!-- REPRODUCTOR -->
+<!-- REPRODUCTOR -->
     <div id="reproductorRutas" class="reproductor-rutas">
         <div class="reproductor-header">
-            <h2 id="repPlaca">Auditoría: --</h2>
+            <!-- CAMBIO: Agregamos un input para escribir la placa y un botón para buscar -->
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <h2 id="repPlaca" style="margin:0;">Auditoría:</h2>
+                <input type="text" id="inputPlacaHistorial" class="input-buscador" placeholder="Escribe Placa..." style="width: 120px; padding: 5px; font-size: 14px;" onkeyup="this.value = this.value.toUpperCase()">
+                <button class="btn-resolver" style="padding: 5px 10px; margin:0;" onclick="cargarHistorialDia()">Buscar</button>
+            </div>
             <div>
                 <input type="date" id="repFecha" class="input-fecha" onchange="cargarHistorialDia()">
                 <button class="btn-cerrar-rep" style="margin-left: 10px;" onclick="cerrarReproductor()">Cerrar</button>
