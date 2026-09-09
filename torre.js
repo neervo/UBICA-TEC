@@ -424,10 +424,10 @@ function evaluarParada(inicio, fin) {
         marcadoresTiempoMuerto.push(marker); // Lo guardamos para poder borrarlo después
     }
 }
-// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD
+// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Color Inteligente y Regleta)
 function generarGraficaVelocidad(datos) {
     const ctx = document.getElementById('graficaVelocidad').getContext('2d');
-    if (chartVelocidad) chartVelocidad.destroy(); // Borra la gráfica anterior si buscas otra placa
+    if (chartVelocidad) chartVelocidad.destroy(); 
 
     const labels = datos.map(p => new Date(p.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
     const dataVel = datos.map(p => parseFloat(p.vel));
@@ -439,12 +439,15 @@ function generarGraficaVelocidad(datos) {
             datasets: [{
                 label: 'Velocidad (km/h)',
                 data: dataVel,
-                borderColor: '#FF5E3A',
-                backgroundColor: 'rgba(255, 94, 58, 0.2)', // Naranja transparente
+                // Pintar Verde si se mueve (> 2 km/h), Rojo si está detenido (<= 2 km/h)
+                segment: {
+                    borderColor: ctx => ctx.p0.parsed.y <= 2 ? '#ef4444' : '#10b981',
+                    backgroundColor: ctx => ctx.p0.parsed.y <= 2 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)'
+                },
                 borderWidth: 2,
                 fill: true,
-                pointRadius: 0, // Sin puntitos para que se vea como línea continua
-                tension: 0.3 // Curvas suaves
+                pointRadius: 0, 
+                tension: 0.3 
             }]
         },
         options: {
@@ -452,8 +455,18 @@ function generarGraficaVelocidad(datos) {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                x: { display: false }, // Ocultamos las horas de abajo para no amontonar
-                y: { beginAtZero: true, max: Math.max(...dataVel) + 10, ticks: { font: {size: 9} } }
+                x: { 
+                    display: true, // Activa la regleta de horas
+                    ticks: { 
+                        maxTicksLimit: 8, // Evita que se amontonen los textos mostrando máximo 8 horas de referencia
+                        font: { size: 10 } 
+                    } 
+                }, 
+                y: { 
+                    beginAtZero: true, 
+                    max: Math.max(...dataVel) + 10, 
+                    ticks: { font: {size: 10} } 
+                }
             }
         }
     });
@@ -466,7 +479,18 @@ function dibujarLineaHistorial() { const ptos = datosHistorial.map(p => [p.lat, 
 window.actualizarDatosSlider = function(index) { if(datosHistorial.length === 0) return; const punto = datosHistorial[index]; marcadorHistorial.setLatLng([punto.lat, punto.lng]); document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); };
 window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
 window.togglePlayRep = function() { const btn = document.getElementById('btnPlayRep'); if(timerHistorial) { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } else { btn.innerText = "Pausa"; timerHistorial = setInterval(() => { let val = parseInt(document.getElementById('sliderRep').value); if(val < datosHistorial.length - 1) { document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); } else { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } }, 800); } };
-
+// AJUSTE FINO: Mover un punto a la vez
+window.moverPaso = function(direccion) {
+    let slider = document.getElementById('sliderRep');
+    let max = parseInt(slider.max);
+    let val = parseInt(slider.value) + direccion;
+    
+    // Solo se mueve si no se sale de los límites
+    if (val >= 0 && val <= max) {
+        slider.value = val;
+        actualizarDatosSlider(val);
+    }
+};
 // 🧹 LIMPIEZA TOTAL (Para que no se empalmen los puntos rojos de un camión con los de otro)
 function limpiarRutaMapa() { 
     if(polylineHistorial) mapa.removeLayer(polylineHistorial); 
