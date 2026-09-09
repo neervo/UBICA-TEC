@@ -245,20 +245,26 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
 
 // HISTORIAL REPRODUCTOR MANTIENE IGUAL
 let datosHistorial = [], polylineHistorial = null, marcadorHistorial = null, timerHistorial = null;
-window.abrirReproductor = function() { 
+
+// 1. NUEVA FUNCIÓN: Para el botón global que pusimos en el panel lateral
+window.abrirReproductorGlobal = function() { 
     document.getElementById('reproductorRutas').style.display = 'block';
     document.getElementById('repFecha').value = new Date().toISOString().split('T')[0];
-    
-    // Si hay un camión seleccionado previamente, rellenamos la caja de texto automáticamente
-    if (camionSeleccionado) {
-        document.getElementById('inputPlacaHistorial').value = camionSeleccionado;
-        cargarHistorialDia();
-    } else {
-        document.getElementById('inputPlacaHistorial').value = '';
-        document.getElementById('repInfoHora').innerText = "--:--";
-    }
+    document.getElementById('inputPlacaHistorial').value = '';
+    document.getElementById('repInfoHora').innerText = "--:--";
+    limpiarRutaMapa();
 };
 
+// 2. FUNCIÓN ORIGINAL: Para cuando seleccionas "Auditoría de Ruta" desde el panel de un camión activo
+window.abrirReproductor = function() { 
+    if (!camionSeleccionado) return;
+    document.getElementById('reproductorRutas').style.display = 'block';
+    document.getElementById('repFecha').value = new Date().toISOString().split('T')[0];
+    document.getElementById('inputPlacaHistorial').value = camionSeleccionado;
+    cargarHistorialDia();
+};
+
+// 3. BUSCADOR MULTI-RUTAS: Encuentra los datos sin importar cómo los anidó Firebase
 window.cargarHistorialDia = function() { 
     const fecha = document.getElementById('repFecha').value;
     const placaInput = document.getElementById('inputPlacaHistorial').value.trim().toUpperCase();
@@ -268,28 +274,33 @@ window.cargarHistorialDia = function() {
     }
     
     limpiarRutaMapa(); 
-    document.getElementById('repInfoHora').innerText = "..."; 
+    document.getElementById('repInfoHora').innerText = "Buscando..."; 
     
-    // 1. Intentamos leer la ruta estándar: historial_rutas/fecha/placa
+    // Intento 1: Ruta estándar (FECHA / PLACA)
     db.ref(`historial_rutas/${fecha}/${placaInput}`).once('value', snap => {
         let val = snap.val();
         
-        // 2. Si está vacío, intentamos con la ruta anidada con fecha extra por si acaso
-        if (!val) {
-            db.ref(`historial_rutas/${fecha}/${placaInput}/${fecha}`).once('value', snap2 => {
-                val = snap2.val();
+        if (val) {
+            // Parche por si Firebase lo guardó doblemente anidado (FECHA / PLACA / FECHA)
+            if (val[fecha]) {
+                procesarDatosHistorial(val[fecha]);
+            } else {
                 procesarDatosHistorial(val);
-            });
+            }
         } else {
-            procesarDatosHistorial(val);
+            // Intento 2: Ruta invertida por versiones anteriores (PLACA / FECHA)
+            db.ref(`historial_rutas/${placaInput}/${fecha}`).once('value', snap2 => {
+                procesarDatosHistorial(snap2.val());
+            });
         }
     });
 };
 
+// 4. TRADUCTOR UNIVERSAL: Adapta las variables de la tablet Lite
 function procesarDatosHistorial(val) {
     if (!val) {
         document.getElementById('repInfoHora').innerText = "--:--"; 
-        return mostrarModal("Vacío", "No hay registros para esta unidad en la fecha seleccionada."); 
+        return mostrarModal("Vacío", `No hay registros para la unidad en el día seleccionado.`); 
     }
 
     // Adaptador automático para leer cualquier nombre de variable que haya mandado la tablet
@@ -298,14 +309,15 @@ function procesarDatosHistorial(val) {
             lat: p.lat || p.latitude || p.latitud || 0,
             lng: p.lng || p.longitude || p.longitud || 0,
             time: p.time || p.timestamp || p.hora || Date.now(),
-            vel: p.vel || p.velocidad || p.velocidad_actual || 0,
+            vel: p.vel || p.velocidad || p.velocidad_actual || p.speed || 0,
             est: p.est || p.estado || 'activo'
         };
-    }).sort((a, b) => a.time - b.time);
+    }).filter(p => p.lat !== 0 && p.lng !== 0) // Filtro de seguridad por si hay coordenadas rotas
+    .sort((a, b) => a.time - b.time);
 
     if(datosHistorial.length === 0) {
         document.getElementById('repInfoHora').innerText = "--:--";
-        return mostrarModal("Vacío", "Los registros están vacíos.");
+        return mostrarModal("Vacío", "Los registros encontrados están vacíos o corruptos.");
     }
     
     document.getElementById('sliderRep').max = datosHistorial.length - 1; 
@@ -313,6 +325,14 @@ function procesarDatosHistorial(val) {
     dibujarLineaHistorial(); 
     actualizarDatosSlider(0);
 }
+
+// FUNCIONES DE DIBUJO (Se quedan como estaban)
+function dibujarLineaHistorial() { const ptos = datosHistorial.map(p => [p.lat, p.lng]); polylineHistorial = L.polyline(ptos, {color: '#FF5E3A', weight: 4, opacity: 0.8, dashArray: '8, 8'}).addTo(mapa); mapa.fitBounds(polylineHistorial.getBounds(), {padding: [50, 50]}); const ghostIcon = L.divIcon({ className: '', html: `<div class="icono-base icono-fantasma"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }); marcadorHistorial = L.marker(ptos[0], {icon: ghostIcon, zIndexOffset: 1000}).addTo(mapa); }
+window.actualizarDatosSlider = function(index) { if(datosHistorial.length === 0) return; const punto = datosHistorial[index]; marcadorHistorial.setLatLng([punto.lat, punto.lng]); document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); };
+window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
+window.togglePlayRep = function() { const btn = document.getElementById('btnPlayRep'); if(timerHistorial) { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } else { btn.innerText = "Pausa"; timerHistorial = setInterval(() => { let val = parseInt(document.getElementById('sliderRep').value); if(val < datosHistorial.length - 1) { document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); } else { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } }, 800); } };
+function limpiarRutaMapa() { if(polylineHistorial) mapa.removeLayer(polylineHistorial); if(marcadorHistorial) mapa.removeLayer(marcadorHistorial); polylineHistorial = null; marcadorHistorial = null; if(timerHistorial) clearInterval(timerHistorial); timerHistorial = null; document.getElementById('btnPlayRep').innerText = "Play"; }
+window.cerrarReproductor = function() { limpiarRutaMapa(); document.getElementById('reproductorRutas').style.display = 'none'; datosHistorial = []; mapa.setView([19.066, -104.295], 16); };
 
 // ==========================================
 // 📞 SISTEMA WEBRTC (LLAMADAS P2P GRATUITAS)
