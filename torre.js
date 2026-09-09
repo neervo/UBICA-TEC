@@ -6,6 +6,16 @@ const firebaseConfig = { apiKey: "AIzaSyAH7D-sLL4fCJDliP8xzuYUQGt-H5H7nXE", auth
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
+// FÓRMULA GEOSPACIAL PARA CALCULAR DISTANCIAS EN KILÓMETROS
+function calcularDistanciaGPS(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Radio de la Tierra en km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + 
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+}
 // LÓGICA DE LOGIN (Candado Beta)
 function iniciarSesionTorre() {
     let user = document.getElementById('loginUser').value;
@@ -64,38 +74,84 @@ window.cambiarTab = function(tabName) {
     document.getElementById(`btnTab${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`).classList.add('activo');
 };
 
-// EXCEL INTELIGENTE (Solo Truck Time a Foráneos y Traslados)
+// EXCEL INTELIGENTE (Ahora con Telemetría Avanzada)
 window.exportarExcel = async function() {
+    showToast("Procesando telemetría... Espere un momento.");
     const fechaHoy = new Date().toISOString().split('T')[0];
-    let csv = "Placa,Tipo,Subtipo,Estado,Destino/Buque,STS,Velocidad (km/h),Hora Ingreso,Hora Salida,Truck Time Min,Estatus\n";
     
-    for(let key in dataGlobal) {
-        let u = dataGlobal[key]; 
+    // Agregamos las 3 columnas nuevas al encabezado
+    let csv = "Placa,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Estatus\n";
+
+    // Función interna para escanear la ruta de un camión
+    async function analizarRuta(placa) {
+        let km = 0, velSuma = 0, minDetenido = 0, ptsValidos = 0;
+        let snap = await db.ref(`historial_rutas/${fechaHoy}/${placa}`).once('value');
+        let data = snap.val();
+        
+        if (data) {
+            if (data[fechaHoy]) data = data[fechaHoy]; // Parche por si se guardó anidado
+            let pts = Object.values(data).sort((a,b) => (a.time||a.timestamp) - (b.time||b.timestamp));
+            
+            for (let i = 1; i < pts.length; i++) {
+                let p1 = pts[i-1], p2 = pts[i];
+                let lat1 = p1.lat||p1.latitude, lon1 = p1.lng||p1.longitude;
+                let lat2 = p2.lat||p2.latitude, lon2 = p2.lng||p2.longitude;
+
+                if (lat1 && lon1 && lat2 && lon2) {
+                    km += calcularDistanciaGPS(lat1, lon1, lat2, lon2);
+                }
+
+                let v = parseFloat(p1.vel || p1.velocidad || p1.velocidad_actual || p1.speed || 0);
+                velSuma += v; 
+                ptsValidos++;
+
+                // Si va a 2 km/h o menos, sumamos ese tiempo como "Detenido"
+                if (v <= 2) { 
+                    let diffMs = (p2.time||p2.timestamp||0) - (p1.time||p1.timestamp||0);
+                    if (diffMs > 0 && diffMs < 300000) { // Ignoramos brincos mayores a 5 mins
+                        minDetenido += (diffMs / 60000);
+                    }
+                }
+            }
+        }
+        let prom = ptsValidos > 0 ? (velSuma / ptsValidos) : 0;
+        return { km: km.toFixed(2), prom: prom.toFixed(1), detenido: Math.floor(minDetenido) };
+    }
+
+    // 1. PROCESAR UNIDADES ACTIVAS
+    for (let placa in dataGlobal) {
+        let u = dataGlobal[placa]; 
         let aplicaTT = (u.tipo === 'FORANEO' || (u.tipo === 'INTERNO' && u.subtipo === 'Traslado'));
-        let min = aplicaTT ? Math.floor((Date.now() - (u.hora_ingreso||Date.now())) / 60000) : 'N/A';
+        let minTT = aplicaTT ? Math.floor((Date.now() - (u.hora_ingreso||Date.now())) / 60000) : 'N/A';
         let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
         
-        csv += `${u.placa},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${u.velocidad_actual || 0},${horaIn},EN RUTA,${min},ACTIVO\n`;
+        let kpis = await analizarRuta(placa); // Magia matemática aquí
+        
+        csv += `${placa},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},ACTIVO\n`;
     }
     
-    const snap = await db.ref(`viajes_finalizados/${fechaHoy}`).once('value');
-    if(snap.val()) {
-        let finalizados = snap.val();
-        for(let key in finalizados) {
+    // 2. PROCESAR VIAJES FINALIZADOS
+    const snapFin = await db.ref(`viajes_finalizados/${fechaHoy}`).once('value');
+    if (snapFin.val()) {
+        let finalizados = snapFin.val();
+        for (let key in finalizados) {
             let u = finalizados[key];
+            let placaFin = u.placa || key.split('_')[0];
             let aplicaTT = (u.tipo === 'FORANEO' || (u.tipo === 'INTERNO' && u.subtipo === 'Traslado'));
-            let minTotal = aplicaTT ? (u.minutos_totales || 0) : 'N/A';
+            let minTT = aplicaTT ? (u.minutos_totales || 0) : 'N/A';
             let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
             let horaOut = u.hora_salida ? new Date(u.hora_salida).toLocaleTimeString() : 'N/A';
             
-            csv += `${u.placa},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},0,${horaIn},${horaOut},${minTotal},FINALIZADO\n`;
+            let kpis = await analizarRuta(placaFin); // Magia matemática aquí
+            
+            csv += `${placaFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},FINALIZADO\n`;
         }
     }
     
+    // DESCARGAR ARCHIVO
     const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Reporte_YMS_${fechaHoy}.csv`; a.click();
 };
-
 // DASHBOARD INTELIGENTE (Promedia solo aplicables)
 function actualizarDashboard() {
     let total = 0, ocio = 0, act = 0, bano = 0, pager = 0, emerg = 0; 
