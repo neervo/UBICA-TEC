@@ -173,14 +173,16 @@
             <div>Edo: <span id="repInfoEst">--</span></div>
         </div>
 <div class="reproductor-controles" style="display: flex; flex-direction: column;">
-            <!-- NUEVO: Contenedor de la gráfica de velocidad -->
-            <div style="height: 80px; width: 100%; margin-bottom: 10px;">
+            <!-- Gráfica más alta (120px) y con margen para no apretarse -->
+            <div style="height: 120px; width: 100%; margin-bottom: 15px;">
                 <canvas id="graficaVelocidad"></canvas>
             </div>
-            <!-- Los controles originales alineados -->
-            <div style="display: flex; width: 100%; align-items: center;">
+            <!-- Controles con botones de ajuste fino paso a paso -->
+            <div style="display: flex; width: 100%; align-items: center; gap: 8px;">
                 <button class="btn-play" id="btnPlayRep" onclick="togglePlayRep()">Play</button>
-                <input type="range" id="sliderRep" class="slider-tiempo" min="0" value="0" step="1" oninput="moverSliderRep()" style="flex-grow: 1; margin-left: 10px;">
+                <button class="btn-resolver" style="margin: 0; padding: 5px 12px; font-size: 16px;" onclick="moverPaso(-1)">⏪</button>
+                <button class="btn-resolver" style="margin: 0; padding: 5px 12px; font-size: 16px;" onclick="moverPaso(1)">⏩</button>
+                <input type="range" id="sliderRep" class="slider-tiempo" min="0" value="0" step="1" oninput="moverSliderRep()" style="flex-grow: 1;">
             </div>
         </div>
     <script src="torre.js"></script>
