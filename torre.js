@@ -6,6 +6,9 @@ const firebaseConfig = { apiKey: "AIzaSyAH7D-sLL4fCJDliP8xzuYUQGt-H5H7nXE", auth
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
+// ---> AQUÍ MERO AGREGAS LA VARIABLE <---
+let chartVelocidad = null;
+
 // FÓRMULA GEOSPACIAL PARA CALCULAR DISTANCIAS EN KILÓMETROS
 function calcularDistanciaGPS(lat1, lon1, lat2, lon2) {
     const R = 6371; // Radio de la Tierra en km
@@ -371,6 +374,7 @@ function procesarDatosHistorial(val) {
 
     // 🚀 INYECCIÓN DE INTELIGENCIA: Buscar Puntos Muertos
     detectarTiemposMuertos(datosHistorial);
+    generarGraficaVelocidad(datosHistorial);
 }
 
 // 🛑 EL CEREBRO DETECTOR DE PARADAS
@@ -419,6 +423,40 @@ function evaluarParada(inicio, fin) {
         marker.bindTooltip(tooltipContent, {direction: 'top', offset: [0, -10], opacity: 0.95});
         marcadoresTiempoMuerto.push(marker); // Lo guardamos para poder borrarlo después
     }
+}
+// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD
+function generarGraficaVelocidad(datos) {
+    const ctx = document.getElementById('graficaVelocidad').getContext('2d');
+    if (chartVelocidad) chartVelocidad.destroy(); // Borra la gráfica anterior si buscas otra placa
+
+    const labels = datos.map(p => new Date(p.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+    const dataVel = datos.map(p => parseFloat(p.vel));
+
+    chartVelocidad = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Velocidad (km/h)',
+                data: dataVel,
+                borderColor: '#FF5E3A',
+                backgroundColor: 'rgba(255, 94, 58, 0.2)', // Naranja transparente
+                borderWidth: 2,
+                fill: true,
+                pointRadius: 0, // Sin puntitos para que se vea como línea continua
+                tension: 0.3 // Curvas suaves
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { display: false }, // Ocultamos las horas de abajo para no amontonar
+                y: { beginAtZero: true, max: Math.max(...dataVel) + 10, ticks: { font: {size: 9} } }
+            }
+        }
+    });
 }
 
 // ==========================================
