@@ -299,10 +299,12 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
     renderLista();
 });
 
-// HISTORIAL REPRODUCTOR MANTIENE IGUAL
+// ==========================================
+// 📍 REPRODUCTOR HISTÓRICO Y TELEMETRÍA
+// ==========================================
 let datosHistorial = [], polylineHistorial = null, marcadorHistorial = null, timerHistorial = null;
+let marcadoresTiempoMuerto = []; // Arreglo para guardar los puntos rojos
 
-// 1. NUEVA FUNCIÓN: Para el botón global que pusimos en el panel lateral
 window.abrirReproductorGlobal = function() { 
     document.getElementById('reproductorRutas').style.display = 'block';
     document.getElementById('repFecha').value = new Date().toISOString().split('T')[0];
@@ -311,7 +313,6 @@ window.abrirReproductorGlobal = function() {
     limpiarRutaMapa();
 };
 
-// 2. FUNCIÓN ORIGINAL: Para cuando seleccionas "Auditoría de Ruta" desde el panel de un camión activo
 window.abrirReproductor = function() { 
     if (!camionSeleccionado) return;
     document.getElementById('reproductorRutas').style.display = 'block';
@@ -320,31 +321,21 @@ window.abrirReproductor = function() {
     cargarHistorialDia();
 };
 
-// 3. BUSCADOR MULTI-RUTAS: Encuentra los datos sin importar cómo los anidó Firebase
 window.cargarHistorialDia = function() { 
     const fecha = document.getElementById('repFecha').value;
     const placaInput = document.getElementById('inputPlacaHistorial').value.trim().toUpperCase();
     
-    if (!fecha || !placaInput) {
-        return alert("Ingresa una fecha y una matrícula válida.");
-    }
+    if (!fecha || !placaInput) return alert("Ingresa una fecha y una matrícula válida.");
     
     limpiarRutaMapa(); 
     document.getElementById('repInfoHora').innerText = "Buscando..."; 
     
-    // Intento 1: Ruta estándar (FECHA / PLACA)
     db.ref(`historial_rutas/${fecha}/${placaInput}`).once('value', snap => {
         let val = snap.val();
-        
         if (val) {
-            // Parche por si Firebase lo guardó doblemente anidado (FECHA / PLACA / FECHA)
-            if (val[fecha]) {
-                procesarDatosHistorial(val[fecha]);
-            } else {
-                procesarDatosHistorial(val);
-            }
+            if (val[fecha]) procesarDatosHistorial(val[fecha]);
+            else procesarDatosHistorial(val);
         } else {
-            // Intento 2: Ruta invertida por versiones anteriores (PLACA / FECHA)
             db.ref(`historial_rutas/${placaInput}/${fecha}`).once('value', snap2 => {
                 procesarDatosHistorial(snap2.val());
             });
@@ -352,14 +343,12 @@ window.cargarHistorialDia = function() {
     });
 };
 
-// 4. TRADUCTOR UNIVERSAL: Adapta las variables de la tablet Lite
 function procesarDatosHistorial(val) {
     if (!val) {
         document.getElementById('repInfoHora').innerText = "--:--"; 
         return mostrarModal("Vacío", `No hay registros para la unidad en el día seleccionado.`); 
     }
 
-    // Adaptador automático para leer cualquier nombre de variable que haya mandado la tablet
     datosHistorial = Object.values(val).map(p => {
         return {
             lat: p.lat || p.latitude || p.latitud || 0,
@@ -368,8 +357,7 @@ function procesarDatosHistorial(val) {
             vel: p.vel || p.velocidad || p.velocidad_actual || p.speed || 0,
             est: p.est || p.estado || 'activo'
         };
-    }).filter(p => p.lat !== 0 && p.lng !== 0) // Filtro de seguridad por si hay coordenadas rotas
-    .sort((a, b) => a.time - b.time);
+    }).filter(p => p.lat !== 0 && p.lng !== 0).sort((a, b) => a.time - b.time);
 
     if(datosHistorial.length === 0) {
         document.getElementById('repInfoHora').innerText = "--:--";
@@ -380,14 +368,76 @@ function procesarDatosHistorial(val) {
     document.getElementById('sliderRep').value = 0; 
     dibujarLineaHistorial(); 
     actualizarDatosSlider(0);
+
+    // 🚀 INYECCIÓN DE INTELIGENCIA: Buscar Puntos Muertos
+    detectarTiemposMuertos(datosHistorial);
 }
 
-// FUNCIONES DE DIBUJO (Se quedan como estaban)
+// 🛑 EL CEREBRO DETECTOR DE PARADAS
+function detectarTiemposMuertos(datos) {
+    let enPausa = false, inicioPausa = null, finPausa = null;
+
+    for(let i=0; i<datos.length; i++) {
+        let p = datos[i];
+        let v = parseFloat(p.vel);
+
+        if(v <= 2) { // Si va a menos de 2 km/h
+            if(!enPausa) { enPausa = true; inicioPausa = p; }
+            finPausa = p;
+        } else { // Si aceleró, cerramos el bloque y lo evaluamos
+            if(enPausa) { evaluarParada(inicioPausa, finPausa); enPausa = false; }
+        }
+    }
+    if(enPausa) evaluarParada(inicioPausa, finPausa); // Por si terminó el turno estando estacionado
+}
+
+function evaluarParada(inicio, fin) {
+    let duracionMs = fin.time - inicio.time;
+    let minDetenido = Math.floor(duracionMs / 60000);
+
+    // 🚨 REGLA DE ORO: Solo marcar con punto rojo si estuvo MÁS DE 5 MINUTOS detenido
+    if(minDetenido >= 5) { 
+        const iconoParada = L.divIcon({
+            className: '',
+            html: `<div style="background-color:#ef4444; color:white; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:2px solid white; box-shadow:0 0 5px rgba(0,0,0,0.5); font-size:12px; cursor:pointer;">🛑</div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+
+        let horaInicio = new Date(inicio.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        let horaFin = new Date(fin.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+        let marker = L.marker([inicio.lat, inicio.lng], {icon: iconoParada, zIndexOffset: 800}).addTo(mapa);
+        
+        let tooltipContent = `
+            <div style="text-align:center; font-family:'Plus Jakarta Sans', sans-serif;">
+                <strong style="color:#ef4444; font-size:14px;">🛑 Detención Crítica</strong><br>
+                <b>Duración:</b> ${minDetenido} Minutos<br>
+                <span style="font-size:11px; color:#666;">${horaInicio} - ${horaFin}</span>
+            </div>
+        `;
+        marker.bindTooltip(tooltipContent, {direction: 'top', offset: [0, -10], opacity: 0.95});
+        marcadoresTiempoMuerto.push(marker); // Lo guardamos para poder borrarlo después
+    }
+}
+
+// ==========================================
+// CONTROLES DE INTERFAZ DEL MAPA
+// ==========================================
 function dibujarLineaHistorial() { const ptos = datosHistorial.map(p => [p.lat, p.lng]); polylineHistorial = L.polyline(ptos, {color: '#FF5E3A', weight: 4, opacity: 0.8, dashArray: '8, 8'}).addTo(mapa); mapa.fitBounds(polylineHistorial.getBounds(), {padding: [50, 50]}); const ghostIcon = L.divIcon({ className: '', html: `<div class="icono-base icono-fantasma"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }); marcadorHistorial = L.marker(ptos[0], {icon: ghostIcon, zIndexOffset: 1000}).addTo(mapa); }
 window.actualizarDatosSlider = function(index) { if(datosHistorial.length === 0) return; const punto = datosHistorial[index]; marcadorHistorial.setLatLng([punto.lat, punto.lng]); document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); };
 window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
 window.togglePlayRep = function() { const btn = document.getElementById('btnPlayRep'); if(timerHistorial) { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } else { btn.innerText = "Pausa"; timerHistorial = setInterval(() => { let val = parseInt(document.getElementById('sliderRep').value); if(val < datosHistorial.length - 1) { document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); } else { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } }, 800); } };
-function limpiarRutaMapa() { if(polylineHistorial) mapa.removeLayer(polylineHistorial); if(marcadorHistorial) mapa.removeLayer(marcadorHistorial); polylineHistorial = null; marcadorHistorial = null; if(timerHistorial) clearInterval(timerHistorial); timerHistorial = null; document.getElementById('btnPlayRep').innerText = "Play"; }
+
+// 🧹 LIMPIEZA TOTAL (Para que no se empalmen los puntos rojos de un camión con los de otro)
+function limpiarRutaMapa() { 
+    if(polylineHistorial) mapa.removeLayer(polylineHistorial); 
+    if(marcadorHistorial) mapa.removeLayer(marcadorHistorial); 
+    if(marcadoresTiempoMuerto.length > 0) { marcadoresTiempoMuerto.forEach(m => mapa.removeLayer(m)); marcadoresTiempoMuerto = []; }
+    polylineHistorial = null; marcadorHistorial = null; 
+    if(timerHistorial) clearInterval(timerHistorial); timerHistorial = null; 
+    document.getElementById('btnPlayRep').innerText = "Play"; 
+}
 window.cerrarReproductor = function() { limpiarRutaMapa(); document.getElementById('reproductorRutas').style.display = 'none'; datosHistorial = []; mapa.setView([19.066, -104.295], 16); };
 
 // ==========================================
