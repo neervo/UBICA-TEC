@@ -270,22 +270,49 @@ window.cargarHistorialDia = function() {
     limpiarRutaMapa(); 
     document.getElementById('repInfoHora').innerText = "..."; 
     
-    // CORRECCIÓN: Agregamos la barra final con la fecha para entrar al sub-nivel de Firebase
-    db.ref(`historial_rutas/${fecha}/${placaInput}/${fecha}`).once('value', snap => { 
-        if(!snap.val()) { 
-            document.getElementById('repInfoHora').innerText = "--:--"; 
-            return mostrarModal("Vacío", "No hay registros para esta unidad en la fecha seleccionada."); 
-        } 
+    // 1. Intentamos leer la ruta estándar: historial_rutas/fecha/placa
+    db.ref(`historial_rutas/${fecha}/${placaInput}`).once('value', snap => {
+        let val = snap.val();
         
-        datosHistorial = Object.values(snap.val()).sort((a,b) => a.time - b.time); 
-        if(datosHistorial.length === 0) return; 
-        
-        document.getElementById('sliderRep').max = datosHistorial.length - 1; 
-        document.getElementById('sliderRep').value = 0; 
-        dibujarLineaHistorial(); 
-        actualizarDatosSlider(0); 
-    }); 
+        // 2. Si está vacío, intentamos con la ruta anidada con fecha extra por si acaso
+        if (!val) {
+            db.ref(`historial_rutas/${fecha}/${placaInput}/${fecha}`).once('value', snap2 => {
+                val = snap2.val();
+                procesarDatosHistorial(val);
+            });
+        } else {
+            procesarDatosHistorial(val);
+        }
+    });
 };
+
+function procesarDatosHistorial(val) {
+    if (!val) {
+        document.getElementById('repInfoHora').innerText = "--:--"; 
+        return mostrarModal("Vacío", "No hay registros para esta unidad en la fecha seleccionada."); 
+    }
+
+    // Adaptador automático para leer cualquier nombre de variable que haya mandado la tablet
+    datosHistorial = Object.values(val).map(p => {
+        return {
+            lat: p.lat || p.latitude || p.latitud || 0,
+            lng: p.lng || p.longitude || p.longitud || 0,
+            time: p.time || p.timestamp || p.hora || Date.now(),
+            vel: p.vel || p.velocidad || p.velocidad_actual || 0,
+            est: p.est || p.estado || 'activo'
+        };
+    }).sort((a, b) => a.time - b.time);
+
+    if(datosHistorial.length === 0) {
+        document.getElementById('repInfoHora').innerText = "--:--";
+        return mostrarModal("Vacío", "Los registros están vacíos.");
+    }
+    
+    document.getElementById('sliderRep').max = datosHistorial.length - 1; 
+    document.getElementById('sliderRep').value = 0; 
+    dibujarLineaHistorial(); 
+    actualizarDatosSlider(0);
+}
 
 // ==========================================
 // 📞 SISTEMA WEBRTC (LLAMADAS P2P GRATUITAS)
