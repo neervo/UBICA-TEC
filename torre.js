@@ -270,8 +270,8 @@ window.cargarHistorialDia = function() {
     limpiarRutaMapa(); 
     document.getElementById('repInfoHora').innerText = "..."; 
     
-    // Consulta directamente en la carpeta histórica organizada por fecha y placa
-    db.ref(`historial_rutas/${fecha}/${placaInput}`).once('value', snap => { 
+    // CORRECCIÓN: Agregamos la barra final con la fecha para entrar al sub-nivel de Firebase
+    db.ref(`historial_rutas/${fecha}/${placaInput}/${fecha}`).once('value', snap => { 
         if(!snap.val()) { 
             document.getElementById('repInfoHora').innerText = "--:--"; 
             return mostrarModal("Vacío", "No hay registros para esta unidad en la fecha seleccionada."); 
