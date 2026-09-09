@@ -172,11 +172,17 @@
             <div>Vel: <span id="repInfoVel">-- km/h</span></div>
             <div>Edo: <span id="repInfoEst">--</span></div>
         </div>
-        <div class="reproductor-controles">
-            <button class="btn-play" id="btnPlayRep" onclick="togglePlayRep()">Play</button>
-            <input type="range" id="sliderRep" class="slider-tiempo" min="0" value="0" step="1" oninput="moverSliderRep()">
+<div class="reproductor-controles" style="display: flex; flex-direction: column;">
+            <!-- NUEVO: Contenedor de la gráfica de velocidad -->
+            <div style="height: 80px; width: 100%; margin-bottom: 10px;">
+                <canvas id="graficaVelocidad"></canvas>
+            </div>
+            <!-- Los controles originales alineados -->
+            <div style="display: flex; width: 100%; align-items: center;">
+                <button class="btn-play" id="btnPlayRep" onclick="togglePlayRep()">Play</button>
+                <input type="range" id="sliderRep" class="slider-tiempo" min="0" value="0" step="1" oninput="moverSliderRep()" style="flex-grow: 1; margin-left: 10px;">
+            </div>
         </div>
-    </div>
     <script src="torre.js"></script>
 </body>
 </html>
