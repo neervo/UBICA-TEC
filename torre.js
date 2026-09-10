@@ -424,13 +424,37 @@ function evaluarParada(inicio, fin) {
         marcadoresTiempoMuerto.push(marker); // Lo guardamos para poder borrarlo después
     }
 }
-// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Color Inteligente y Regleta)
+// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Con Línea Rastreadora)
 function generarGraficaVelocidad(datos) {
     const ctx = document.getElementById('graficaVelocidad').getContext('2d');
     if (chartVelocidad) chartVelocidad.destroy(); 
 
     const labels = datos.map(p => new Date(p.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
     const dataVel = datos.map(p => parseFloat(p.vel));
+
+    // PLUGIN MAGICO: Dibuja una línea vertical donde esté el slider
+    const lineaVerticalPlugin = {
+        id: 'lineaVertical',
+        afterDraw: chart => {
+            const index = chart.config.options.plugins.lineaVertical.activeIndex;
+            if (index !== undefined && index !== null) {
+                const meta = chart.getDatasetMeta(0);
+                const pt = meta.data[index];
+                if (pt) {
+                    const ctx = chart.ctx;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(pt.x, chart.scales.y.top);
+                    ctx.lineTo(pt.x, chart.scales.y.bottom);
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = '#FF5E3A'; // Línea Naranja UBICA-TEC
+                    ctx.setLineDash([5, 5]); // Línea punteada elegante
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+    };
 
     chartVelocidad = new Chart(ctx, {
         type: 'line',
@@ -439,7 +463,6 @@ function generarGraficaVelocidad(datos) {
             datasets: [{
                 label: 'Velocidad (km/h)',
                 data: dataVel,
-                // Pintar Verde si se mueve (> 2 km/h), Rojo si está detenido (<= 2 km/h)
                 segment: {
                     borderColor: ctx => ctx.p0.parsed.y <= 2 ? '#ef4444' : '#10b981',
                     backgroundColor: ctx => ctx.p0.parsed.y <= 2 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)'
@@ -453,30 +476,35 @@ function generarGraficaVelocidad(datos) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: { 
+                legend: { display: false },
+                lineaVertical: { activeIndex: 0 } // Inicia en el punto cero
+            },
             scales: {
-                x: { 
-                    display: true, // Activa la regleta de horas
-                    ticks: { 
-                        maxTicksLimit: 8, // Evita que se amontonen los textos mostrando máximo 8 horas de referencia
-                        font: { size: 10 } 
-                    } 
-                }, 
-                y: { 
-                    beginAtZero: true, 
-                    max: Math.max(...dataVel) + 10, 
-                    ticks: { font: {size: 10} } 
-                }
+                x: { display: true, ticks: { maxTicksLimit: 8, font: { size: 10 } } }, 
+                y: { beginAtZero: true, max: Math.max(...dataVel) + 10, ticks: { font: {size: 10} } }
             }
-        }
+        },
+        plugins: [lineaVerticalPlugin] // Activamos el plugin
     });
 }
-
 // ==========================================
 // CONTROLES DE INTERFAZ DEL MAPA
 // ==========================================
-function dibujarLineaHistorial() { const ptos = datosHistorial.map(p => [p.lat, p.lng]); polylineHistorial = L.polyline(ptos, {color: '#FF5E3A', weight: 4, opacity: 0.8, dashArray: '8, 8'}).addTo(mapa); mapa.fitBounds(polylineHistorial.getBounds(), {padding: [50, 50]}); const ghostIcon = L.divIcon({ className: '', html: `<div class="icono-base icono-fantasma"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }); marcadorHistorial = L.marker(ptos[0], {icon: ghostIcon, zIndexOffset: 1000}).addTo(mapa); }
-window.actualizarDatosSlider = function(index) { if(datosHistorial.length === 0) return; const punto = datosHistorial[index]; marcadorHistorial.setLatLng([punto.lat, punto.lng]); document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); };
+window.actualizarDatosSlider = function(index) { 
+    if(datosHistorial.length === 0) return; 
+    const punto = datosHistorial[index]; 
+    marcadorHistorial.setLatLng([punto.lat, punto.lng]); 
+    document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); 
+    document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; 
+    document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); 
+
+    // NUEVO: Sincronizar la línea vertical en la gráfica con el slider
+    if (chartVelocidad) {
+        chartVelocidad.options.plugins.lineaVertical.activeIndex = index;
+        chartVelocidad.update('none'); // Se actualiza sin animación para que sea inmediato y fluido
+    }
+};
 window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
 window.togglePlayRep = function() { const btn = document.getElementById('btnPlayRep'); if(timerHistorial) { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } else { btn.innerText = "Pausa"; timerHistorial = setInterval(() => { let val = parseInt(document.getElementById('sliderRep').value); if(val < datosHistorial.length - 1) { document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); } else { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } }, 800); } };
 // AJUSTE FINO: Mover un punto a la vez
