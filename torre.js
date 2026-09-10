@@ -306,12 +306,21 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
 // ==========================================
 // 📍 REPRODUCTOR HISTÓRICO Y TELEMETRÍA
 // ==========================================
+var chartVelocidad = null; // Usamos var para evitar errores si se pegó dos veces
+var indexRastreador = 0; 
 let datosHistorial = [], polylineHistorial = null, marcadorHistorial = null, timerHistorial = null;
-let marcadoresTiempoMuerto = []; // Arreglo para guardar los puntos rojos
+let marcadoresTiempoMuerto = []; 
+
+// SOLUCIÓN AL BUG DE LA ZONA HORARIA (Fuerza la hora de México)
+function obtenerFechaLocal() {
+    const hoy = new Date();
+    const offset = hoy.getTimezoneOffset() * 60000;
+    return new Date(hoy.getTime() - offset).toISOString().split('T')[0];
+}
 
 window.abrirReproductorGlobal = function() { 
     document.getElementById('reproductorRutas').style.display = 'block';
-    document.getElementById('repFecha').value = new Date().toISOString().split('T')[0];
+    document.getElementById('repFecha').value = obtenerFechaLocal(); // <--- Aquí usamos la nueva función
     document.getElementById('inputPlacaHistorial').value = '';
     document.getElementById('repInfoHora').innerText = "--:--";
     limpiarRutaMapa();
@@ -320,7 +329,7 @@ window.abrirReproductorGlobal = function() {
 window.abrirReproductor = function() { 
     if (!camionSeleccionado) return;
     document.getElementById('reproductorRutas').style.display = 'block';
-    document.getElementById('repFecha').value = new Date().toISOString().split('T')[0];
+    document.getElementById('repFecha').value = obtenerFechaLocal(); // <--- Aquí usamos la nueva función
     document.getElementById('inputPlacaHistorial').value = camionSeleccionado;
     cargarHistorialDia();
 };
@@ -370,7 +379,9 @@ function procesarDatosHistorial(val) {
     
     document.getElementById('sliderRep').max = datosHistorial.length - 1; 
     document.getElementById('sliderRep').value = 0; 
-generarGraficaVelocidad(datosHistorial);
+    
+    // ORDEN BLINDADO: 1. Gráfica, 2. Mapa, 3. Slider, 4. Puntos Rojos
+    generarGraficaVelocidad(datosHistorial);
     dibujarLineaHistorial(); 
     actualizarDatosSlider(0);
     detectarTiemposMuertos(datosHistorial);
