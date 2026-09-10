@@ -8,6 +8,7 @@ const db = firebase.database();
 
 // ---> AQUÍ MERO AGREGAS LA VARIABLE <---
 let chartVelocidad = null;
+let indexRastreador = 0;
 
 // FÓRMULA GEOSPACIAL PARA CALCULAR DISTANCIAS EN KILÓMETROS
 function calcularDistanciaGPS(lat1, lon1, lat2, lon2) {
@@ -369,12 +370,10 @@ function procesarDatosHistorial(val) {
     
     document.getElementById('sliderRep').max = datosHistorial.length - 1; 
     document.getElementById('sliderRep').value = 0; 
+generarGraficaVelocidad(datosHistorial);
     dibujarLineaHistorial(); 
     actualizarDatosSlider(0);
-
-    // 🚀 INYECCIÓN DE INTELIGENCIA: Buscar Puntos Muertos
     detectarTiemposMuertos(datosHistorial);
-    generarGraficaVelocidad(datosHistorial);
 }
 
 // 🛑 EL CEREBRO DETECTOR DE PARADAS
@@ -424,34 +423,37 @@ function evaluarParada(inicio, fin) {
         marcadoresTiempoMuerto.push(marker); // Lo guardamos para poder borrarlo después
     }
 }
-// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Con Línea Rastreadora)
+// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Blindado)
 function generarGraficaVelocidad(datos) {
-    const ctx = document.getElementById('graficaVelocidad').getContext('2d');
+    const canvas = document.getElementById('graficaVelocidad');
+    if (!canvas) {
+        console.error("Falta el <canvas id='graficaVelocidad'> en el HTML");
+        return; 
+    }
+    const ctx = canvas.getContext('2d');
+    
     if (chartVelocidad) chartVelocidad.destroy(); 
 
     const labels = datos.map(p => new Date(p.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
     const dataVel = datos.map(p => parseFloat(p.vel));
 
-    // PLUGIN MAGICO: Dibuja una línea vertical donde esté el slider
+    // PLUGIN MAGICO: Dibuja la línea usando la variable global segura
     const lineaVerticalPlugin = {
         id: 'lineaVertical',
         afterDraw: chart => {
-            const index = chart.config.options.plugins.lineaVertical.activeIndex;
-            if (index !== undefined && index !== null) {
-                const meta = chart.getDatasetMeta(0);
-                const pt = meta.data[index];
-                if (pt) {
-                    const ctx = chart.ctx;
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.moveTo(pt.x, chart.scales.y.top);
-                    ctx.lineTo(pt.x, chart.scales.y.bottom);
-                    ctx.lineWidth = 3;
-                    ctx.strokeStyle = '#FF5E3A'; // Línea Naranja UBICA-TEC
-                    ctx.setLineDash([5, 5]); // Línea punteada elegante
-                    ctx.stroke();
-                    ctx.restore();
-                }
+            const meta = chart.getDatasetMeta(0);
+            const pt = meta.data[indexRastreador]; // <--- Usa la variable global
+            if (pt) {
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(pt.x, chart.scales.y.top);
+                ctx.lineTo(pt.x, chart.scales.y.bottom);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#FF5E3A'; 
+                ctx.setLineDash([5, 5]); 
+                ctx.stroke();
+                ctx.restore();
             }
         }
     };
@@ -476,16 +478,13 @@ function generarGraficaVelocidad(datos) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { 
-                legend: { display: false },
-                lineaVertical: { activeIndex: 0 } // Inicia en el punto cero
-            },
+            plugins: { legend: { display: false } },
             scales: {
                 x: { display: true, ticks: { maxTicksLimit: 8, font: { size: 10 } } }, 
                 y: { beginAtZero: true, max: Math.max(...dataVel) + 10, ticks: { font: {size: 10} } }
             }
         },
-        plugins: [lineaVerticalPlugin] // Activamos el plugin
+        plugins: [lineaVerticalPlugin] 
     });
 }
 // ==========================================
@@ -495,14 +494,16 @@ window.actualizarDatosSlider = function(index) {
     if(datosHistorial.length === 0) return; 
     const punto = datosHistorial[index]; 
     marcadorHistorial.setLatLng([punto.lat, punto.lng]); 
+    
+    // Quita el letrero de "Buscando..." y pone los datos reales
     document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); 
     document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; 
     document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); 
 
-    // NUEVO: Sincronizar la línea vertical en la gráfica con el slider
+    // Actualizamos la variable global y le avisamos a la gráfica sin animaciones pesadas
+    indexRastreador = index;
     if (chartVelocidad) {
-        chartVelocidad.options.plugins.lineaVertical.activeIndex = index;
-        chartVelocidad.update('none'); // Se actualiza sin animación para que sea inmediato y fluido
+        chartVelocidad.update('none'); 
     }
 };
 window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
