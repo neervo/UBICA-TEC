@@ -306,12 +306,12 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
 // ==========================================
 // 📍 REPRODUCTOR HISTÓRICO Y TELEMETRÍA
 // ==========================================
-var chartVelocidad = null; // Usamos var para evitar errores si se pegó dos veces
+var chartVelocidad = null; 
 var indexRastreador = 0; 
 let datosHistorial = [], polylineHistorial = null, marcadorHistorial = null, timerHistorial = null;
 let marcadoresTiempoMuerto = []; 
 
-// SOLUCIÓN AL BUG DE LA ZONA HORARIA (Fuerza la hora de México)
+// SOLUCIÓN AL BUG DE LA ZONA HORARIA (Fuerza la hora local)
 function obtenerFechaLocal() {
     const hoy = new Date();
     const offset = hoy.getTimezoneOffset() * 60000;
@@ -320,7 +320,7 @@ function obtenerFechaLocal() {
 
 window.abrirReproductorGlobal = function() { 
     document.getElementById('reproductorRutas').style.display = 'block';
-    document.getElementById('repFecha').value = obtenerFechaLocal(); // <--- Aquí usamos la nueva función
+    document.getElementById('repFecha').value = obtenerFechaLocal(); 
     document.getElementById('inputPlacaHistorial').value = '';
     document.getElementById('repInfoHora').innerText = "--:--";
     limpiarRutaMapa();
@@ -329,7 +329,7 @@ window.abrirReproductorGlobal = function() {
 window.abrirReproductor = function() { 
     if (!camionSeleccionado) return;
     document.getElementById('reproductorRutas').style.display = 'block';
-    document.getElementById('repFecha').value = obtenerFechaLocal(); // <--- Aquí usamos la nueva función
+    document.getElementById('repFecha').value = obtenerFechaLocal(); 
     document.getElementById('inputPlacaHistorial').value = camionSeleccionado;
     cargarHistorialDia();
 };
@@ -380,7 +380,7 @@ function procesarDatosHistorial(val) {
     document.getElementById('sliderRep').max = datosHistorial.length - 1; 
     document.getElementById('sliderRep').value = 0; 
     
-    // ORDEN BLINDADO: 1. Gráfica, 2. Mapa, 3. Slider, 4. Puntos Rojos
+    // ORDEN BLINDADO
     generarGraficaVelocidad(datosHistorial);
     dibujarLineaHistorial(); 
     actualizarDatosSlider(0);
@@ -395,21 +395,20 @@ function detectarTiemposMuertos(datos) {
         let p = datos[i];
         let v = parseFloat(p.vel);
 
-        if(v <= 2) { // Si va a menos de 2 km/h
+        if(v <= 2) { 
             if(!enPausa) { enPausa = true; inicioPausa = p; }
             finPausa = p;
-        } else { // Si aceleró, cerramos el bloque y lo evaluamos
+        } else { 
             if(enPausa) { evaluarParada(inicioPausa, finPausa); enPausa = false; }
         }
     }
-    if(enPausa) evaluarParada(inicioPausa, finPausa); // Por si terminó el turno estando estacionado
+    if(enPausa) evaluarParada(inicioPausa, finPausa); 
 }
 
 function evaluarParada(inicio, fin) {
     let duracionMs = fin.time - inicio.time;
     let minDetenido = Math.floor(duracionMs / 60000);
 
-    // 🚨 REGLA DE ORO: Solo marcar con punto rojo si estuvo MÁS DE 5 MINUTOS detenido
     if(minDetenido >= 5) { 
         const iconoParada = L.divIcon({
             className: '',
@@ -431,16 +430,14 @@ function evaluarParada(inicio, fin) {
             </div>
         `;
         marker.bindTooltip(tooltipContent, {direction: 'top', offset: [0, -10], opacity: 0.95});
-        marcadoresTiempoMuerto.push(marker); // Lo guardamos para poder borrarlo después
+        marcadoresTiempoMuerto.push(marker); 
     }
 }
-// DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Blindado)
+
+// 📈 DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Con Línea Rastreadora)
 function generarGraficaVelocidad(datos) {
     const canvas = document.getElementById('graficaVelocidad');
-    if (!canvas) {
-        console.error("Falta el <canvas id='graficaVelocidad'> en el HTML");
-        return; 
-    }
+    if (!canvas) return console.error("Falta el <canvas id='graficaVelocidad'> en el HTML");
     const ctx = canvas.getContext('2d');
     
     if (chartVelocidad) chartVelocidad.destroy(); 
@@ -448,12 +445,11 @@ function generarGraficaVelocidad(datos) {
     const labels = datos.map(p => new Date(p.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
     const dataVel = datos.map(p => parseFloat(p.vel));
 
-    // PLUGIN MAGICO: Dibuja la línea usando la variable global segura
     const lineaVerticalPlugin = {
         id: 'lineaVertical',
         afterDraw: chart => {
             const meta = chart.getDatasetMeta(0);
-            const pt = meta.data[indexRastreador]; // <--- Usa la variable global
+            const pt = meta.data[indexRastreador]; 
             if (pt) {
                 const ctx = chart.ctx;
                 ctx.save();
@@ -498,40 +494,65 @@ function generarGraficaVelocidad(datos) {
         plugins: [lineaVerticalPlugin] 
     });
 }
-// ==========================================
-// CONTROLES DE INTERFAZ DEL MAPA
-// ==========================================
-window.actualizarDatosSlider = function(index) { 
-    if(datosHistorial.length === 0) return; 
-    const punto = datosHistorial[index]; 
-    marcadorHistorial.setLatLng([punto.lat, punto.lng]); 
-    
-    // Quita el letrero de "Buscando..." y pone los datos reales
-    document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); 
-    document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; 
-    document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); 
 
-    // Actualizamos la variable global y le avisamos a la gráfica sin animaciones pesadas
-    indexRastreador = index;
-    if (chartVelocidad) {
-        chartVelocidad.update('none'); 
-    }
-};
-window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
-window.togglePlayRep = function() { const btn = document.getElementById('btnPlayRep'); if(timerHistorial) { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } else { btn.innerText = "Pausa"; timerHistorial = setInterval(() => { let val = parseInt(document.getElementById('sliderRep').value); if(val < datosHistorial.length - 1) { document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); } else { clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; } }, 800); } };
-// AJUSTE FINO: Mover un punto a la vez
+// ==========================================
+// 🎛️ CONTROLES DE INTERFAZ DEL MAPA
+// ==========================================
 window.moverPaso = function(direccion) {
     let slider = document.getElementById('sliderRep');
     let max = parseInt(slider.max);
     let val = parseInt(slider.value) + direccion;
-    
-    // Solo se mueve si no se sale de los límites
     if (val >= 0 && val <= max) {
         slider.value = val;
         actualizarDatosSlider(val);
     }
 };
-// 🧹 LIMPIEZA TOTAL (Para que no se empalmen los puntos rojos de un camión con los de otro)
+
+function dibujarLineaHistorial() { 
+    const ptos = datosHistorial.map(p => [p.lat, p.lng]); 
+    polylineHistorial = L.polyline(ptos, {color: '#FF5E3A', weight: 4, opacity: 0.8, dashArray: '8, 8'}).addTo(mapa); 
+    mapa.fitBounds(polylineHistorial.getBounds(), {padding: [50, 50]}); 
+    const ghostIcon = L.divIcon({ className: '', html: `<div class="icono-base icono-fantasma"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }); 
+    marcadorHistorial = L.marker(ptos[0], {icon: ghostIcon, zIndexOffset: 1000}).addTo(mapa); 
+}
+
+window.actualizarDatosSlider = function(index) { 
+    if(datosHistorial.length === 0) return; 
+    const punto = datosHistorial[index]; 
+    marcadorHistorial.setLatLng([punto.lat, punto.lng]); 
+    
+    document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); 
+    document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; 
+    document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); 
+
+    indexRastreador = index;
+    if (chartVelocidad) chartVelocidad.update('none'); 
+};
+
+window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.getElementById('sliderRep').value)); };
+
+window.togglePlayRep = function() { 
+    const btn = document.getElementById('btnPlayRep'); 
+    if(timerHistorial) { 
+        clearInterval(timerHistorial); 
+        timerHistorial = null; 
+        btn.innerText = "Play"; 
+    } else { 
+        btn.innerText = "Pausa"; 
+        timerHistorial = setInterval(() => { 
+            let val = parseInt(document.getElementById('sliderRep').value); 
+            if(val < datosHistorial.length - 1) { 
+                document.getElementById('sliderRep').value = ++val; 
+                actualizarDatosSlider(val); 
+            } else { 
+                clearInterval(timerHistorial); 
+                timerHistorial = null; 
+                btn.innerText = "Play"; 
+            } 
+        }, 800); 
+    } 
+};
+
 function limpiarRutaMapa() { 
     if(polylineHistorial) mapa.removeLayer(polylineHistorial); 
     if(marcadorHistorial) mapa.removeLayer(marcadorHistorial); 
@@ -540,11 +561,13 @@ function limpiarRutaMapa() {
     if(timerHistorial) clearInterval(timerHistorial); timerHistorial = null; 
     document.getElementById('btnPlayRep').innerText = "Play"; 
 }
-window.cerrarReproductor = function() { limpiarRutaMapa(); document.getElementById('reproductorRutas').style.display = 'none'; datosHistorial = []; mapa.setView([19.066, -104.295], 16); };
 
-// ==========================================
-// 📞 SISTEMA WEBRTC (LLAMADAS P2P GRATUITAS)
-// ==========================================
+window.cerrarReproductor = function() { 
+    limpiarRutaMapa(); 
+    document.getElementById('reproductorRutas').style.display = 'none'; 
+    datosHistorial = []; 
+    mapa.setView([19.066, -104.295], 16); 
+};
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 let localStreamTorre;
 let pcTorre;
