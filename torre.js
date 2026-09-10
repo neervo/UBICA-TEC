@@ -6,21 +6,30 @@ const firebaseConfig = { apiKey: "AIzaSyAH7D-sLL4fCJDliP8xzuYUQGt-H5H7nXE", auth
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// ---> AQUÍ MERO AGREGAS LA VARIABLE <---
-let chartVelocidad = null;
-let indexRastreador = 0;
+// ==========================================
+// GLOBALES Y TELEMETRÍA
+// ==========================================
+const marcadoresCamiones = {}; const listaUnidades = document.getElementById('listaUnidades');
+let camionSeleccionado = null; let dataGlobal = {}; let seleccionadosMulti = new Set();
+let geocercasMapa = {}; let posicionesMapa = {}; let emergenciasMapa = {};
+let verInternos = true, verForaneos = true; let chartFlota = null;
 
-// FÓRMULA GEOSPACIAL PARA CALCULAR DISTANCIAS EN KILÓMETROS
+var chartVelocidad = null; 
+var indexRastreador = 0; 
+let datosHistorial = [], polylineHistorial = null, marcadorHistorial = null, timerHistorial = null;
+let marcadoresTiempoMuerto = [];
+
 function calcularDistanciaGPS(lat1, lon1, lat2, lon2) {
-    const R = 6371; // Radio de la Tierra en km
+    const R = 6371; 
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + 
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 }
-// LÓGICA DE LOGIN (Candado Beta)
+
+// ==========================================
+// LÓGICA DE LOGIN Y MODALES
+// ==========================================
 function iniciarSesionTorre() {
     let user = document.getElementById('loginUser').value;
     let pass = document.getElementById('loginPass').value;
@@ -57,11 +66,9 @@ function showToast(mensaje) {
     container.appendChild(toast); setTimeout(() => { toast.remove(); }, 5000);
 }
 
-const marcadoresCamiones = {}; const listaUnidades = document.getElementById('listaUnidades');
-let camionSeleccionado = null; let dataGlobal = {}; let seleccionadosMulti = new Set();
-let geocercasMapa = {}; let posicionesMapa = {}; let emergenciasMapa = {};
-let verInternos = true, verForaneos = true; let chartFlota = null;
-
+// ==========================================
+// DASHBOARD Y EXCEL
+// ==========================================
 window.onload = () => {
     const ctx = document.getElementById('graficaFlota').getContext('2d');
     chartFlota = new Chart(ctx, {
@@ -78,43 +85,28 @@ window.cambiarTab = function(tabName) {
     document.getElementById(`btnTab${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`).classList.add('activo');
 };
 
-// EXCEL INTELIGENTE (Ahora con Telemetría Avanzada)
 window.exportarExcel = async function() {
     showToast("Procesando telemetría... Espere un momento.");
     const fechaHoy = new Date().toISOString().split('T')[0];
-    
-    // Agregamos las 3 columnas nuevas al encabezado
     let csv = "Placa,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Estatus\n";
-
-    // Función interna para escanear la ruta de un camión
+    
     async function analizarRuta(placa) {
         let km = 0, velSuma = 0, minDetenido = 0, ptsValidos = 0;
         let snap = await db.ref(`historial_rutas/${fechaHoy}/${placa}`).once('value');
         let data = snap.val();
-        
         if (data) {
-            if (data[fechaHoy]) data = data[fechaHoy]; // Parche por si se guardó anidado
+            if (data[fechaHoy]) data = data[fechaHoy]; 
             let pts = Object.values(data).sort((a,b) => (a.time||a.timestamp) - (b.time||b.timestamp));
-            
             for (let i = 1; i < pts.length; i++) {
                 let p1 = pts[i-1], p2 = pts[i];
                 let lat1 = p1.lat||p1.latitude, lon1 = p1.lng||p1.longitude;
                 let lat2 = p2.lat||p2.latitude, lon2 = p2.lng||p2.longitude;
-
-                if (lat1 && lon1 && lat2 && lon2) {
-                    km += calcularDistanciaGPS(lat1, lon1, lat2, lon2);
-                }
-
+                if (lat1 && lon1 && lat2 && lon2) km += calcularDistanciaGPS(lat1, lon1, lat2, lon2);
                 let v = parseFloat(p1.vel || p1.velocidad || p1.velocidad_actual || p1.speed || 0);
-                velSuma += v; 
-                ptsValidos++;
-
-                // Si va a 2 km/h o menos, sumamos ese tiempo como "Detenido"
+                velSuma += v; ptsValidos++;
                 if (v <= 2) { 
                     let diffMs = (p2.time||p2.timestamp||0) - (p1.time||p1.timestamp||0);
-                    if (diffMs > 0 && diffMs < 300000) { // Ignoramos brincos mayores a 5 mins
-                        minDetenido += (diffMs / 60000);
-                    }
+                    if (diffMs > 0 && diffMs < 300000) minDetenido += (diffMs / 60000);
                 }
             }
         }
@@ -122,19 +114,15 @@ window.exportarExcel = async function() {
         return { km: km.toFixed(2), prom: prom.toFixed(1), detenido: Math.floor(minDetenido) };
     }
 
-    // 1. PROCESAR UNIDADES ACTIVAS
     for (let placa in dataGlobal) {
         let u = dataGlobal[placa]; 
         let aplicaTT = (u.tipo === 'FORANEO' || (u.tipo === 'INTERNO' && u.subtipo === 'Traslado'));
         let minTT = aplicaTT ? Math.floor((Date.now() - (u.hora_ingreso||Date.now())) / 60000) : 'N/A';
         let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
-        
-        let kpis = await analizarRuta(placa); // Magia matemática aquí
-        
+        let kpis = await analizarRuta(placa); 
         csv += `${placa},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},ACTIVO\n`;
     }
     
-    // 2. PROCESAR VIAJES FINALIZADOS
     const snapFin = await db.ref(`viajes_finalizados/${fechaHoy}`).once('value');
     if (snapFin.val()) {
         let finalizados = snapFin.val();
@@ -145,42 +133,33 @@ window.exportarExcel = async function() {
             let minTT = aplicaTT ? (u.minutos_totales || 0) : 'N/A';
             let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
             let horaOut = u.hora_salida ? new Date(u.hora_salida).toLocaleTimeString() : 'N/A';
-            
-            let kpis = await analizarRuta(placaFin); // Magia matemática aquí
-            
+            let kpis = await analizarRuta(placaFin); 
             csv += `${placaFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},FINALIZADO\n`;
         }
     }
-    
-    // DESCARGAR ARCHIVO
     const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Reporte_YMS_${fechaHoy}.csv`; a.click();
 };
-// DASHBOARD INTELIGENTE (Promedia solo aplicables)
+
 function actualizarDashboard() {
     let total = 0, ocio = 0, act = 0, bano = 0, pager = 0, emerg = 0; 
-    let sumaMinutosTotales = 0;
-    let unidadesParaPromedio = 0;
+    let sumaMinutosTotales = 0; let unidadesParaPromedio = 0;
 
     for(let key in dataGlobal) {
         total++; let c = dataGlobal[key]; let est = c.estado;
         if(est === 'ocio') ocio++; else if(est === 'baño') bano++; else if(est === 'pager') pager++; else if(est === 'emergencia') emerg++; else act++;
-        
         let aplicaTT = (c.tipo === 'FORANEO' || (c.tipo === 'INTERNO' && c.subtipo === 'Traslado'));
-        if(aplicaTT) {
-            sumaMinutosTotales += Math.floor((Date.now() - (c.hora_ingreso || Date.now())) / 60000);
-            unidadesParaPromedio++;
-        }
+        if(aplicaTT) { sumaMinutosTotales += Math.floor((Date.now() - (c.hora_ingreso || Date.now())) / 60000); unidadesParaPromedio++; }
     }
-    
     document.getElementById('dashTotal').innerText = total; document.getElementById('dashOcio').innerText = ocio;
-    
     let promedio = unidadesParaPromedio > 0 ? Math.floor(sumaMinutosTotales / unidadesParaPromedio) : 0;
     document.getElementById('dashTruckTime').innerText = promedio + "m";
-    
     if(chartFlota) { chartFlota.data.datasets[0].data = [act, ocio, bano, pager, emerg]; chartFlota.update(); }
 }
 
+// ==========================================
+// HERRAMIENTAS DEL MAPA (Geocercas y Acciones)
+// ==========================================
 let modoDibujoPos = false, modoDibujoGeo = false, modoDibujoEmergencia = false;
 let puntosDibujo = [], polylineDibujo = null, marcadoresDibujo = [];
 
@@ -253,12 +232,9 @@ window.renderLista = function() {
         else if (camion.estado === 'pager') { claseCSS = 'alerta-pager'; chipHtml = `<span class="chip-estado chip-pager">Falla</span>`;}
         else if (camion.estado === 'baño') { claseCSS = 'alerta-bano'; chipHtml = `<span class="chip-estado chip-bano">Pausa</span>`;}
         else if (camion.estado === 'ocio') { claseCSS = 'alerta-ocio'; chipHtml = `<span class="chip-estado chip-ocio">Ocio</span>`;}
-
         if (parseFloat(camion.velocidad_actual) > 30) { claseCSS += ' alerta-velocidad'; chipHtml = `<span class="chip-estado chip-velocidad">⚠️ VELOCIDAD</span>`; }
 
         let isChecked = seleccionadosMulti.has(placa) ? 'checked' : '';
-        
-        // CONDICIONAL VISUAL TRUCK TIME
         let aplicaTT = (camion.tipo === 'FORANEO' || (camion.tipo === 'INTERNO' && camion.subtipo === 'Traslado'));
         let minTxt = aplicaTT ? Math.floor((Date.now() - (camion.hora_ingreso||Date.now())) / 60000) + 'm' : 'N/A';
 
@@ -271,7 +247,6 @@ window.renderLista = function() {
 
         if (camion.tipo === 'INTERNO') { htmlInternos += tarjetaHTML; countInt++; } else { htmlForaneos += tarjetaHTML; countFor++; }
     }
-
     let vistaFinal = `<details open><summary>Operación Interna (${countInt}) <button class="btn-ojo" onclick="toggleOjito('internos', event)">[ ${verInternos ? "Ocultar" : "Mostrar"} ]</button></summary>${verInternos ? htmlInternos : ''}</details><details open><summary>Flujo Foráneo (${countFor}) <button class="btn-ojo" onclick="toggleOjito('foraneos', event)">[ ${verForaneos ? "Ocultar" : "Mostrar"} ]</button></summary>${verForaneos ? htmlForaneos : ''}</details>`;
     listaUnidades.innerHTML = vistaFinal; document.getElementById('contadorCamiones').innerText = totalUnidades; actualizarDashboard();
 }
@@ -294,8 +269,6 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
         let min = Math.floor((Date.now() - (camionInfo.hora_ingreso||Date.now())) / 60000); camionInfo.minutos_totales = min; camionInfo.hora_salida = Date.now();
         const fechaHoy = new Date().toISOString().split('T')[0];
         db.ref(`viajes_finalizados/${fechaHoy}/${placa}_${Date.now()}`).set(camionInfo);
-        
-        // TOAST SOLO PARA APLICABLES A TRUCK TIME
         if(camionInfo.tipo === 'FORANEO' || (camionInfo.tipo === 'INTERNO' && camionInfo.subtipo === 'Traslado')) {
             showToast(`Unidad ${placa} finalizó flujo. Truck Time: ${min} min`);
         }
@@ -306,12 +279,6 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
 // ==========================================
 // 📍 REPRODUCTOR HISTÓRICO Y TELEMETRÍA
 // ==========================================
-var chartVelocidad = null; 
-var indexRastreador = 0; 
-let datosHistorial = [], polylineHistorial = null, marcadorHistorial = null, timerHistorial = null;
-let marcadoresTiempoMuerto = []; 
-
-// SOLUCIÓN AL BUG DE LA ZONA HORARIA (Fuerza la hora local)
 function obtenerFechaLocal() {
     const hoy = new Date();
     const offset = hoy.getTimezoneOffset() * 60000;
@@ -380,21 +347,17 @@ function procesarDatosHistorial(val) {
     document.getElementById('sliderRep').max = datosHistorial.length - 1; 
     document.getElementById('sliderRep').value = 0; 
     
-    // ORDEN BLINDADO
     generarGraficaVelocidad(datosHistorial);
     dibujarLineaHistorial(); 
     actualizarDatosSlider(0);
     detectarTiemposMuertos(datosHistorial);
 }
 
-// 🛑 EL CEREBRO DETECTOR DE PARADAS
 function detectarTiemposMuertos(datos) {
     let enPausa = false, inicioPausa = null, finPausa = null;
-
     for(let i=0; i<datos.length; i++) {
         let p = datos[i];
         let v = parseFloat(p.vel);
-
         if(v <= 2) { 
             if(!enPausa) { enPausa = true; inicioPausa = p; }
             finPausa = p;
@@ -408,18 +371,14 @@ function detectarTiemposMuertos(datos) {
 function evaluarParada(inicio, fin) {
     let duracionMs = fin.time - inicio.time;
     let minDetenido = Math.floor(duracionMs / 60000);
-
     if(minDetenido >= 5) { 
         const iconoParada = L.divIcon({
             className: '',
             html: `<div style="background-color:#ef4444; color:white; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:2px solid white; box-shadow:0 0 5px rgba(0,0,0,0.5); font-size:12px; cursor:pointer;">🛑</div>`,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12]
+            iconSize: [24, 24], iconAnchor: [12, 12]
         });
-
         let horaInicio = new Date(inicio.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         let horaFin = new Date(fin.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-
         let marker = L.marker([inicio.lat, inicio.lng], {icon: iconoParada, zIndexOffset: 800}).addTo(mapa);
         
         let tooltipContent = `
@@ -434,7 +393,6 @@ function evaluarParada(inicio, fin) {
     }
 }
 
-// 📈 DIBUJAR ELECTROCARDIOGRAMA DE VELOCIDAD (Con Línea Rastreadora)
 function generarGraficaVelocidad(datos) {
     const canvas = document.getElementById('graficaVelocidad');
     if (!canvas) return console.error("Falta el <canvas id='graficaVelocidad'> en el HTML");
@@ -476,16 +434,11 @@ function generarGraficaVelocidad(datos) {
                     borderColor: ctx => ctx.p0.parsed.y <= 2 ? '#ef4444' : '#10b981',
                     backgroundColor: ctx => ctx.p0.parsed.y <= 2 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)'
                 },
-                borderWidth: 2,
-                fill: true,
-                pointRadius: 0, 
-                tension: 0.3 
+                borderWidth: 2, fill: true, pointRadius: 0, tension: 0.3 
             }]
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
             scales: {
                 x: { display: true, ticks: { maxTicksLimit: 8, font: { size: 10 } } }, 
                 y: { beginAtZero: true, max: Math.max(...dataVel) + 10, ticks: { font: {size: 10} } }
@@ -495,9 +448,6 @@ function generarGraficaVelocidad(datos) {
     });
 }
 
-// ==========================================
-// 🎛️ CONTROLES DE INTERFAZ DEL MAPA
-// ==========================================
 window.moverPaso = function(direccion) {
     let slider = document.getElementById('sliderRep');
     let max = parseInt(slider.max);
@@ -520,7 +470,6 @@ window.actualizarDatosSlider = function(index) {
     if(datosHistorial.length === 0) return; 
     const punto = datosHistorial[index]; 
     marcadorHistorial.setLatLng([punto.lat, punto.lng]); 
-    
     document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); 
     document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; 
     document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); 
@@ -534,20 +483,15 @@ window.moverSliderRep = function() { actualizarDatosSlider(parseInt(document.get
 window.togglePlayRep = function() { 
     const btn = document.getElementById('btnPlayRep'); 
     if(timerHistorial) { 
-        clearInterval(timerHistorial); 
-        timerHistorial = null; 
-        btn.innerText = "Play"; 
+        clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; 
     } else { 
         btn.innerText = "Pausa"; 
         timerHistorial = setInterval(() => { 
             let val = parseInt(document.getElementById('sliderRep').value); 
             if(val < datosHistorial.length - 1) { 
-                document.getElementById('sliderRep').value = ++val; 
-                actualizarDatosSlider(val); 
+                document.getElementById('sliderRep').value = ++val; actualizarDatosSlider(val); 
             } else { 
-                clearInterval(timerHistorial); 
-                timerHistorial = null; 
-                btn.innerText = "Play"; 
+                clearInterval(timerHistorial); timerHistorial = null; btn.innerText = "Play"; 
             } 
         }, 800); 
     } 
@@ -563,15 +507,14 @@ function limpiarRutaMapa() {
 }
 
 window.cerrarReproductor = function() { 
-    limpiarRutaMapa(); 
-    document.getElementById('reproductorRutas').style.display = 'none'; 
-    datosHistorial = []; 
-    mapa.setView([19.066, -104.295], 16); 
+    limpiarRutaMapa(); document.getElementById('reproductorRutas').style.display = 'none'; datosHistorial = []; mapa.setView([19.066, -104.295], 16); 
 };
+
+// ==========================================
+// 📞 SISTEMA WEBRTC (LLAMADAS)
+// ==========================================
 const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-let localStreamTorre;
-let pcTorre;
-let unsubscribeWebRTC = null;
+let localStreamTorre; let pcTorre; let unsubscribeWebRTC = null;
 
 window.iniciarLlamadaTorre = async function() {
     if(!camionSeleccionado) return;
@@ -579,38 +522,23 @@ window.iniciarLlamadaTorre = async function() {
         localStreamTorre = await navigator.mediaDevices.getUserMedia({ audio: true });
         pcTorre = new RTCPeerConnection(rtcConfig);
         localStreamTorre.getTracks().forEach(track => pcTorre.addTrack(track, localStreamTorre));
-
-        pcTorre.onicecandidate = event => {
-            if (event.candidate) { db.ref(`llamadas/${camionSeleccionado}/callerCandidates`).push(event.candidate.toJSON()); }
-        };
-
+        pcTorre.onicecandidate = event => { if (event.candidate) { db.ref(`llamadas/${camionSeleccionado}/callerCandidates`).push(event.candidate.toJSON()); } };
         pcTorre.ontrack = event => { document.getElementById('audioRemotoTorre').srcObject = event.streams[0]; };
-
         const offer = await pcTorre.createOffer();
         await pcTorre.setLocalDescription(offer);
-
         db.ref(`llamadas/${camionSeleccionado}`).set({ offer: { type: offer.type, sdp: offer.sdp } });
-        
         document.getElementById('lblEstadoLlamada').innerText = `Llamando a Unidad ${camionSeleccionado}...`;
         document.getElementById('modalLlamadaActiva').style.display = 'flex';
-
         unsubscribeWebRTC = db.ref(`llamadas/${camionSeleccionado}`).on('value', snap => {
             const data = snap.val();
             if (!data) { colgarLlamadaTorre(true); return; } 
-            
             if (data.answer && pcTorre.signalingState !== 'stable') {
                 document.getElementById('lblEstadoLlamada').innerText = `En llamada con ${camionSeleccionado} 🎙️`;
                 pcTorre.setRemoteDescription(new RTCSessionDescription(data.answer));
             }
         });
-
-        db.ref(`llamadas/${camionSeleccionado}/calleeCandidates`).on('child_added', snap => {
-            if(snap.val()) pcTorre.addIceCandidate(new RTCIceCandidate(snap.val()));
-        });
-
-    } catch (e) {
-        alert("Error de Micrófono: Por favor permite el acceso al micrófono en tu navegador.");
-    }
+        db.ref(`llamadas/${camionSeleccionado}/calleeCandidates`).on('child_added', snap => { if(snap.val()) pcTorre.addIceCandidate(new RTCIceCandidate(snap.val())); });
+    } catch (e) { alert("Error de Micrófono: Por favor permite el acceso al micrófono."); }
 };
 
 window.colgarLlamadaTorre = function(remoto = false) {
@@ -621,22 +549,16 @@ window.colgarLlamadaTorre = function(remoto = false) {
     document.getElementById('modalLlamadaActiva').style.display = 'none';
 };
 
-// LIMPIEZA AUTOMÁTICA DE HISTORIAL (Conserva solo los últimos 3 días)
 function purgarHistorialAntiguo() {
     const hoy = new Date();
     db.ref('historial_rutas').once('value', snap => {
         if (!snap.val()) return;
         const fechasRegistradas = Object.keys(snap.val()); 
-        
         fechasRegistradas.forEach(fechaStr => {
             const fechaCarpeta = new Date(fechaStr);
             const diferenciaDias = Math.floor((hoy - fechaCarpeta) / (1000 * 60 * 60 * 24));
-            
-            if (diferenciaDias > 3) {
-                db.ref(`historial_rutas/${fechaStr}`).remove();
-            }
+            if (diferenciaDias > 3) db.ref(`historial_rutas/${fechaStr}`).remove();
         });
     });
 }
-// Ejecutar la limpieza al cargar la Torre de Control
 setTimeout(purgarHistorialAntiguo, 3000);
