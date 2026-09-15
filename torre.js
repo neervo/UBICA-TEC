@@ -87,31 +87,78 @@ window.cambiarTab = function(tabName) {
 
 window.exportarExcel = async function() {
     showToast("Procesando telemetría... Espere un momento.");
-    const fechaHoy = new Date().toISOString().split('T')[0];
-    let csv = "Placa,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Estatus\n";
+    const fechaHoy = obtenerFechaLocal();
+    // 1. Agregamos las columnas de Ciclos al encabezado
+    let csv = "Placa,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Total Ciclos,Detalle de Ciclos,Estatus\n";
     
     async function analizarRuta(placa) {
         let km = 0, velSuma = 0, minDetenido = 0, ptsValidos = 0;
+        let totalCiclos = 0;
+        let cicloTiempos = [];
+        let prevTime = null;
+
         let snap = await db.ref(`historial_rutas/${fechaHoy}/${placa}`).once('value');
         let data = snap.val();
+        
+        // Fallback robusto por si la estructura está invertida
+        if (!data) {
+            snap = await db.ref(`historial_rutas/${placa}/${fechaHoy}`).once('value');
+            data = snap.val();
+        }
+
         if (data) {
             if (data[fechaHoy]) data = data[fechaHoy]; 
             let pts = Object.values(data).sort((a,b) => (a.time||a.timestamp) - (b.time||b.timestamp));
-            for (let i = 1; i < pts.length; i++) {
-                let p1 = pts[i-1], p2 = pts[i];
-                let lat1 = p1.lat||p1.latitude, lon1 = p1.lng||p1.longitude;
-                let lat2 = p2.lat||p2.latitude, lon2 = p2.lng||p2.longitude;
-                if (lat1 && lon1 && lat2 && lon2) km += calcularDistanciaGPS(lat1, lon1, lat2, lon2);
-                let v = parseFloat(p1.vel || p1.velocidad || p1.velocidad_actual || p1.speed || 0);
-                velSuma += v; ptsValidos++;
-                if (v <= 2) { 
-                    let diffMs = (p2.time||p2.timestamp||0) - (p1.time||p1.timestamp||0);
-                    if (diffMs > 0 && diffMs < 300000) minDetenido += (diffMs / 60000);
+            
+            for (let i = 0; i < pts.length; i++) {
+                let p = pts[i];
+                
+                // 2. Lógica de Tiempos de Ciclo (Laps)
+                if (i === 0) prevTime = p.time || p.timestamp; 
+                let vue = p.vue || p.vueltas || 0;
+                
+                if (vue > totalCiclos) {
+                    totalCiclos = vue;
+                    if (prevTime) {
+                        let diffMs = (p.time || p.timestamp) - prevTime;
+                        let min = Math.floor(diffMs / 60000);
+                        let sec = Math.floor((diffMs % 60000) / 1000);
+                        cicloTiempos.push(`L${vue}: ${min}m ${sec}s`);
+                    }
+                    prevTime = p.time || p.timestamp;
+                }
+
+                // 3. Lógica de Distancia y Velocidad parcheada
+                if (i > 0) {
+                    let p1 = pts[i-1];
+                    let lat1 = p1.lat || p1.latitude || p1.latitud;
+                    let lon1 = p1.lng || p1.longitude || p1.longitud;
+                    let lat2 = p.lat || p.latitude || p.latitud;
+                    let lon2 = p.lng || p.longitude || p.longitud;
+                    
+                    if (lat1 && lon1 && lat2 && lon2) {
+                        km += calcularDistanciaGPS(lat1, lon1, lat2, lon2);
+                    }
+                    
+                    let v = parseFloat(p1.vel || p1.velocidad || p1.velocidad_actual || p1.speed || 0);
+                    velSuma += v; 
+                    ptsValidos++;
+                    
+                    if (v <= 2) { 
+                        let diffMs = (p.time||p.timestamp||0) - (p1.time||p1.timestamp||0);
+                        if (diffMs > 0 && diffMs < 300000) minDetenido += (diffMs / 60000);
+                    }
                 }
             }
         }
         let prom = ptsValidos > 0 ? (velSuma / ptsValidos) : 0;
-        return { km: km.toFixed(2), prom: prom.toFixed(1), detenido: Math.floor(minDetenido) };
+        return { 
+            km: km.toFixed(2), 
+            prom: prom.toFixed(1), 
+            detenido: Math.floor(minDetenido),
+            ciclos: totalCiclos,
+            detalleCiclos: cicloTiempos.length > 0 ? cicloTiempos.join(" | ") : "N/A"
+        };
     }
 
     for (let placa in dataGlobal) {
@@ -120,7 +167,7 @@ window.exportarExcel = async function() {
         let minTT = aplicaTT ? Math.floor((Date.now() - (u.hora_ingreso||Date.now())) / 60000) : 'N/A';
         let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
         let kpis = await analizarRuta(placa); 
-        csv += `${placa},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},ACTIVO\n`;
+        csv += `${placa},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},ACTIVO\n`;
     }
     
     const snapFin = await db.ref(`viajes_finalizados/${fechaHoy}`).once('value');
@@ -134,11 +181,14 @@ window.exportarExcel = async function() {
             let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
             let horaOut = u.hora_salida ? new Date(u.hora_salida).toLocaleTimeString() : 'N/A';
             let kpis = await analizarRuta(placaFin); 
-            csv += `${placaFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},FINALIZADO\n`;
+            csv += `${placaFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},FINALIZADO\n`;
         }
     }
     const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Reporte_YMS_${fechaHoy}.csv`; a.click();
+    const a = document.createElement("a"); 
+    a.href = URL.createObjectURL(blob); 
+    a.download = `Reporte_YMS_${fechaHoy}.csv`; 
+    a.click();
 };
 
 function actualizarDashboard() {
@@ -220,6 +270,10 @@ window.renderLista = function() {
         if(camion.tipo === 'FORANEO' && camion.destino_temporal && camion.destino_temporal !== "") textoDestino = `🔄 ${camion.destino_temporal} (Orig: ${textoDestino})`;
         let infoRuta = camion.tipo === 'FORANEO' ? `Des: ${textoDestino}` : (camion.subtipo === 'Operacion Buque' ? `BQ: ${camion.buque} | ST: ${camion.sts}` : `⚙️ ${camion.subtipo}`);
         
+        let verVueltas = document.getElementById('chkVueltas') ? document.getElementById('chkVueltas').checked : true;
+        let infoVueltas = (verVueltas && camion.vueltas !== undefined) ? ' | 🔄 Laps: ' + camion.vueltas : '';
+        infoRuta += infoVueltas;
+        
         if (filtro !== "" && !placa.includes(filtro) && !infoRuta.includes(filtro)) continue; 
         totalUnidades++;
         
@@ -241,7 +295,7 @@ window.renderLista = function() {
         let tarjetaHTML = `
             <div class="tarjeta-unidad ${claseCSS} ${placa === camionSeleccionado ? 'seleccionada' : ''}" onclick="seleccionarCamion('${placa}', '${camion.estado}')">
                 ${chipHtml}
-                <div class="placa"><input type="checkbox" class="chk-multi" ${isChecked} onclick="toggleMulti('${placa}', event)"><span>${placa}</span><span style="font-size:12px; color:var(--text-secondary);">${camion.velocidad_actual||0} km/h</span></div>
+                <div class="placa"><input type="checkbox" class="chk-multi" ${isChecked} onclick="toggleMulti('${placa}', event)"><span>${placa}</span><span style="font-size:12px; color:var(--text-secondary);">${parseFloat(camion.velocidad_actual || 0).toFixed(1)} km/h</span></div>
                 <div class="datos"><span>${infoRuta}</span><span>Flujo: ${minTxt}</span></div>
             </div>`;
 
@@ -267,7 +321,7 @@ db.ref('camiones_en_patio').on('child_removed', snap => {
     if(seleccionadosMulti.has(placa)) { seleccionadosMulti.delete(placa); actualizarPanelMulti(); }
     if(camionInfo) {
         let min = Math.floor((Date.now() - (camionInfo.hora_ingreso||Date.now())) / 60000); camionInfo.minutos_totales = min; camionInfo.hora_salida = Date.now();
-        const fechaHoy = new Date().toISOString().split('T')[0];
+        const fechaHoy = obtenerFechaLocal();
         db.ref(`viajes_finalizados/${fechaHoy}/${placa}_${Date.now()}`).set(camionInfo);
         if(camionInfo.tipo === 'FORANEO' || (camionInfo.tipo === 'INTERNO' && camionInfo.subtipo === 'Traslado')) {
             showToast(`Unidad ${placa} finalizó flujo. Truck Time: ${min} min`);
@@ -334,8 +388,9 @@ function procesarDatosHistorial(val) {
             lat: p.lat || p.latitude || p.latitud || 0,
             lng: p.lng || p.longitude || p.longitud || 0,
             time: p.time || p.timestamp || p.hora || Date.now(),
-            vel: p.vel || p.velocidad || p.velocidad_actual || p.speed || 0,
-            est: p.est || p.estado || 'activo'
+            vel: parseFloat(p.vel || p.velocidad || p.velocidad_actual || p.speed || 0).toFixed(1),
+            est: p.est || p.estado || 'activo',
+            vue: p.vue || p.vueltas || 0
         };
     }).filter(p => p.lat !== 0 && p.lng !== 0).sort((a, b) => a.time - b.time);
 
@@ -423,6 +478,61 @@ function generarGraficaVelocidad(datos) {
         }
     };
 
+    const banderasCicloPlugin = {
+        id: 'banderasCiclo',
+        afterDraw: chart => {
+            const ctx = chart.ctx;
+            const meta = chart.getDatasetMeta(0);
+            const topY = chart.scales.y.top;
+            const bottomY = chart.scales.y.bottom;
+
+            let vueltaActual = 0;
+            let prevX = null;
+            let prevTime = null;
+
+            ctx.save();
+            ctx.textAlign = 'center';
+
+            for (let i = 0; i < datos.length; i++) {
+                let vue = datos[i].vue || datos[i].vueltas || 0;
+                if (vue > vueltaActual) {
+                    vueltaActual = vue;
+                    const pt = meta.data[i];
+                    if (!pt) continue;
+
+                    // 1. Dibujar línea vertical negra
+                    ctx.beginPath();
+                    ctx.moveTo(pt.x, topY);
+                    ctx.lineTo(pt.x, bottomY);
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = '#1d1c15';
+                    ctx.stroke();
+
+                    // 2. Dibujar bandera
+                    ctx.font = '14px Arial';
+                    ctx.fillText('🏁', pt.x, topY - 5);
+
+                    // 3. Calcular y dibujar el gap de tiempo (Cycle Time)
+                    if (prevTime && prevX) {
+                        let diffMs = datos[i].time - prevTime;
+                        let min = Math.floor(diffMs / 60000);
+                        let sec = Math.floor((diffMs % 60000) / 1000);
+                        let gapText = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+                        
+                        let midX = prevX + ((pt.x - prevX) / 2);
+                        ctx.font = 'bold 11px "Plus Jakarta Sans"';
+                        ctx.fillStyle = '#1d1c15';
+                        ctx.fillText(gapText, midX, topY + 15);
+                    }
+
+                    prevX = pt.x;
+                    prevTime = datos[i].time;
+                }
+            }
+            ctx.restore();
+        }
+    };
+
     chartVelocidad = new Chart(ctx, {
         type: 'line',
         data: {
@@ -444,7 +554,7 @@ function generarGraficaVelocidad(datos) {
                 y: { beginAtZero: true, max: Math.max(...dataVel) + 10, ticks: { font: {size: 10} } }
             }
         },
-        plugins: [lineaVerticalPlugin] 
+        plugins: [lineaVerticalPlugin, banderasCicloPlugin] 
     });
 }
 
@@ -464,6 +574,16 @@ function dibujarLineaHistorial() {
     mapa.fitBounds(polylineHistorial.getBounds(), {padding: [50, 50]}); 
     const ghostIcon = L.divIcon({ className: '', html: `<div class="icono-base icono-fantasma"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }); 
     marcadorHistorial = L.marker(ptos[0], {icon: ghostIcon, zIndexOffset: 1000}).addTo(mapa); 
+    
+    let vueltaActual = 0;
+    for (let i = 0; i < datosHistorial.length; i++) {
+        if (datosHistorial[i].vue > vueltaActual) {
+            vueltaActual = datosHistorial[i].vue;
+            const iconoMeta = L.divIcon({ className: '', html: `<div style="font-size:24px; text-shadow: 0 0 8px #000;">🏁</div>`, iconSize: [24, 24], iconAnchor: [12,24] });
+            let metaMarker = L.marker([datosHistorial[i].lat, datosHistorial[i].lng], {icon: iconoMeta, zIndexOffset: 900}).addTo(mapa).bindTooltip(`Lap ${vueltaActual}`, {permanent: true, direction: 'top', className: 'geo-tooltip'});
+            marcadoresTiempoMuerto.push(metaMarker);
+        }
+    }
 }
 
 window.actualizarDatosSlider = function(index) { 
@@ -471,7 +591,7 @@ window.actualizarDatosSlider = function(index) {
     const punto = datosHistorial[index]; 
     marcadorHistorial.setLatLng([punto.lat, punto.lng]); 
     document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); 
-    document.getElementById('repInfoVel').innerText = punto.vel + " km/h"; 
+    document.getElementById('repInfoVel').innerText = parseFloat(punto.vel).toFixed(1) + " km/h"; 
     document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); 
 
     indexRastreador = index;
