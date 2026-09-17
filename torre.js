@@ -67,10 +67,13 @@ function showToast(mensaje) {
 }
 
 // ==========================================
-// DASHBOARD Y EXCEL
+// DASHBOARD Y EXCEL (VERSIÓN INTELIGENTE)
 // ==========================================
 function escucharTiemposMuertos() {
-    db.ref('tiempos_muertos').on('value', snapshot => {
+    const fechaHoy = obtenerFechaLocal();
+
+    // Ahora leemos el historial GPS real, ignorando la carpeta rota de la app
+    db.ref(`historial_rutas/${fechaHoy}`).on('value', snapshot => {
         const contenedor = document.getElementById('contenedorTurnosMuertos');
         if (!contenedor) return;
         contenedor.innerHTML = '';
@@ -80,6 +83,38 @@ function escucharTiemposMuertos() {
             return;
         }
 
+        // --- MOTOR MATEMÁTICO DE GEOCERCAS OCULTAS (Igual al Excel) ---
+        const zonasOcultas = {
+            "Baño 1": [[19.072258, -104.290410], [19.072263, -104.290536], [19.073607, -104.290252], [19.073637, -104.290340]],
+            "Baño 2": [[19.077016, -104.288363], [19.077151, -104.288170], [19.077295, -104.288291], [19.077199, -104.288481]],
+            "Baño 3": [[19.069269, -104.289222], [19.069267, -104.289061], [19.069439, -104.289023], [19.069449, -104.289187]],
+            "Baño 4": [[19.075021, -104.288404], [19.075125, -104.288369], [19.075232, -104.288860], [19.075130, -104.288889]],
+            "Gas": [[19.069467, -104.289294], [19.069568, -104.289270], [19.069617, -104.289471], [19.069510, -104.289477]],
+            "Antifatiga": [[19.064805, -104.291164], [19.064952, -104.290772], [19.065036, -104.290839], [19.064884, -104.291212]]
+        };
+
+        function expandirPoligono(poligono, factor = 2.5) {
+            let latSum = 0, lngSum = 0;
+            poligono.forEach(p => { latSum += p[0]; lngSum += p[1]; });
+            let cLat = latSum / poligono.length;
+            let cLng = lngSum / poligono.length;
+            return poligono.map(p => [cLat + ((p[0] - cLat) * factor), cLng + ((p[1] - cLng) * factor)]);
+        }
+
+        const zonasAmpliadas = {};
+        for(let z in zonasOcultas) zonasAmpliadas[z] = expandirPoligono(zonasOcultas[z], 2.5);
+
+        function estaAdentro(lat, lng, poligono) {
+            let x = lat, y = lng, inside = false;
+            for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
+                let xi = poligono[i][0], yi = poligono[i][1], xj = poligono[j][0], yj = poligono[j][1];
+                let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+        // -------------------------------------------------------------
+
         const data = snapshot.val();
         let turnosData = {
             'Turno 1': { registros: [], totalIncidencias: 0, totalMinutos: 0 },
@@ -87,35 +122,91 @@ function escucharTiemposMuertos() {
             'Turno 3': { registros: [], totalIncidencias: 0, totalMinutos: 0 }
         };
 
-        const inicioDelDia = new Date();
-        inicioDelDia.setHours(0, 0, 0, 0);
-        const timestampInicio = inicioDelDia.getTime();
-
         for (const placa in data) {
-            const incidentesPlaca = data[placa];
-            for (const pushId in incidentesPlaca) {
-                const info = incidentesPlaca[pushId];
-                if (info.hora_salida >= timestampInicio) {
-                    let horaSalida = info.hora_salida || 0;
-                    let mins = info.minutos_gastados || 0;
-                    
-                    let hora = new Date(horaSalida).getHours();
-                    let turno = 'Turno 3';
-                    if (hora >= 8 && hora < 16) turno = 'Turno 1';
-                    else if (hora >= 16 && hora < 24) turno = 'Turno 2';
+            let ptsData = data[placa];
+            if (ptsData[fechaHoy]) ptsData = ptsData[fechaHoy];
+            
+            let pts = Object.values(ptsData).sort((a,b) => (a.time||a.timestamp) - (b.time||b.timestamp));
+            
+            let desgloseZonas = {};
+            let zonaActual = null, entradaZona = null, ultimoVistoEnZona = null;
 
-                    turnosData[turno].registros.push({
-                        placa: placa,
-                        zona: info.zona || 'Desconocida',
-                        minutos_gastados: mins,
-                        hora_salida: horaSalida
-                    });
-                    turnosData[turno].totalIncidencias++;
-                    turnosData[turno].totalMinutos += mins;
+            // Recorremos los puntos GPS de esta placa
+            for (let i = 0; i < pts.length; i++) {
+                let p = pts[i];
+                let t = p.time || p.timestamp;
+                let lat2 = p.lat || p.latitude || p.latitud;
+                let lon2 = p.lng || p.longitude || p.longitud;
+
+                let detectadoEn = null;
+                if(lat2 && lon2) {
+                    for(let nomZona in zonasAmpliadas) {
+                        if(estaAdentro(lat2, lon2, zonasAmpliadas[nomZona])) { detectadoEn = nomZona; break; }
+                    }
                 }
+
+                if (detectadoEn) {
+                    if (zonaActual === detectadoEn) {
+                        ultimoVistoEnZona = t;
+                    } else {
+                        if (zonaActual) {
+                            let mins = Math.floor((ultimoVistoEnZona - entradaZona) / 60000);
+                            if (mins >= 3) {
+                                if(!desgloseZonas[zonaActual]) desgloseZonas[zonaActual] = { mins: 0, ultimaHora: ultimoVistoEnZona };
+                                desgloseZonas[zonaActual].mins += mins;
+                                desgloseZonas[zonaActual].ultimaHora = ultimoVistoEnZona;
+                            }
+                        }
+                        zonaActual = detectadoEn;
+                        entradaZona = t;
+                        ultimoVistoEnZona = t;
+                    }
+                } else {
+                    if (zonaActual) {
+                        // Anti-rebote de 2 minutos
+                        if (t - ultimoVistoEnZona > 120000) { 
+                            let mins = Math.floor((ultimoVistoEnZona - entradaZona) / 60000);
+                            if (mins >= 3) {
+                                if(!desgloseZonas[zonaActual]) desgloseZonas[zonaActual] = { mins: 0, ultimaHora: ultimoVistoEnZona };
+                                desgloseZonas[zonaActual].mins += mins;
+                                desgloseZonas[zonaActual].ultimaHora = ultimoVistoEnZona;
+                            }
+                            zonaActual = null;
+                        }
+                    }
+                }
+            }
+            
+            if(zonaActual) {
+                let mins = Math.floor((ultimoVistoEnZona - entradaZona) / 60000);
+                if (mins >= 3) {
+                    if(!desgloseZonas[zonaActual]) desgloseZonas[zonaActual] = { mins: 0, ultimaHora: ultimoVistoEnZona };
+                    desgloseZonas[zonaActual].mins += mins;
+                    desgloseZonas[zonaActual].ultimaHora = ultimoVistoEnZona;
+                }
+            }
+
+            // Asignar los tiempos limpios al Turno correspondiente
+            for (let z in desgloseZonas) {
+                let infoZona = desgloseZonas[z];
+                let horaSalida = infoZona.ultimaHora;
+                let hora = new Date(horaSalida).getHours();
+                let turno = 'Turno 3';
+                if (hora >= 8 && hora < 16) turno = 'Turno 1';
+                else if (hora >= 16 && hora < 24) turno = 'Turno 2';
+
+                turnosData[turno].registros.push({
+                    placa: placa,
+                    zona: z,
+                    minutos_gastados: infoZona.mins,
+                    hora_salida: horaSalida
+                });
+                turnosData[turno].totalIncidencias++;
+                turnosData[turno].totalMinutos += infoZona.mins;
             }
         }
 
+        // PINTAR EL HTML
         let currentHour = new Date().getHours();
         let currentTurno = 'Turno 3';
         if (currentHour >= 8 && currentHour < 16) currentTurno = 'Turno 1';
@@ -133,9 +224,9 @@ function escucharTiemposMuertos() {
             let isOpen = (turnoName === currentTurno) ? 'open' : '';
 
             let detailsHtml = `
-                <details style="background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden;" ${isOpen}>
+                <details style="background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; margin-bottom: 5px;" ${isOpen}>
                     <summary style="background: #f9fafb; padding: 12px 15px; font-weight: bold; cursor: pointer; color: #374151; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between;">
-                        <span>${turnoName} - Incidencias: ${tData.totalIncidencias} | Tiempo Perdido: ${tData.totalMinutos} min</span>
+                        <span>${turnoName} - Eventos: ${tData.totalIncidencias} | Total: ${tData.totalMinutos} min</span>
                         <span style="color: #9ca3af;">▼</span>
                     </summary>
                     <div style="padding: 10px;">
@@ -211,24 +302,57 @@ window.exportarExcel = async function() {
         const hora = new Date(timestamp).getHours();
         if (hora >= 8 && hora < 16) return 'Turno 1';
         if (hora >= 16 && hora < 24) return 'Turno 2';
-        return 'Turno 3'; // De 00:00 a 07:59
+        return 'Turno 3'; 
     }
+
+    // --- MOTOR MATEMÁTICO DE GEOCERCAS OCULTAS ---
+    const zonasOcultas = {
+        "Baño 1": [[19.072258, -104.290410], [19.072263, -104.290536], [19.073607, -104.290252], [19.073637, -104.290340]],
+        "Baño 2": [[19.077016, -104.288363], [19.077151, -104.288170], [19.077295, -104.288291], [19.077199, -104.288481]],
+        "Baño 3": [[19.069269, -104.289222], [19.069267, -104.289061], [19.069439, -104.289023], [19.069449, -104.289187]],
+        "Baño 4": [[19.075021, -104.288404], [19.075125, -104.288369], [19.075232, -104.288860], [19.075130, -104.288889]],
+        "Gas": [[19.069467, -104.289294], [19.069568, -104.289270], [19.069617, -104.289471], [19.069510, -104.289477]],
+        "Antifatiga": [[19.064805, -104.291164], [19.064952, -104.290772], [19.065036, -104.290839], [19.064884, -104.291212]]
+    };
+
+    function expandirPoligono(poligono, factor = 2.5) {
+        let latSum = 0, lngSum = 0;
+        poligono.forEach(p => { latSum += p[0]; lngSum += p[1]; });
+        let cLat = latSum / poligono.length;
+        let cLng = lngSum / poligono.length;
+        return poligono.map(p => [cLat + ((p[0] - cLat) * factor), cLng + ((p[1] - cLng) * factor)]);
+    }
+
+    const zonasAmpliadas = {};
+    for(let z in zonasOcultas) zonasAmpliadas[z] = expandirPoligono(zonasOcultas[z], 2.5);
+
+    function estaAdentro(lat, lng, poligono) {
+        let x = lat, y = lng, inside = false;
+        for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
+            let xi = poligono[i][0], yi = poligono[i][1], xj = poligono[j][0], yj = poligono[j][1];
+            let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+    // ---------------------------------------------
 
     showToast("Procesando telemetría... Espere un momento.");
     const fechaHoy = obtenerFechaLocal();
-    // 1. Agregamos las columnas de Ciclos y Turno al encabezado
     let csv = "Placa,Turno,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Total Ciclos,Detalle de Ciclos,Estatus,Zonas Restringidas,Minutos en Zonas\n";
     
     async function analizarRuta(placa) {
         let km = 0, velSuma = 0, minDetenido = 0, ptsValidos = 0;
-        let totalCiclos = 0;
-        let cicloTiempos = [];
-        let prevTime = null;
+        let totalCiclos = 0, cicloTiempos = [], prevTime = null;
+        
+        let desgloseZonas = {};
+        let zonaActual = null;
+        let entradaZona = null;
+        let ultimoVistoEnZona = null;
 
         let snap = await db.ref(`historial_rutas/${fechaHoy}/${placa}`).once('value');
         let data = snap.val();
         
-        // Fallback robusto por si la estructura está invertida
         if (!data) {
             snap = await db.ref(`historial_rutas/${placa}/${fechaHoy}`).once('value');
             data = snap.val();
@@ -240,29 +364,62 @@ window.exportarExcel = async function() {
             
             for (let i = 0; i < pts.length; i++) {
                 let p = pts[i];
+                let t = p.time || p.timestamp;
                 
-                // 2. Lógica de Tiempos de Ciclo (Laps)
-                if (i === 0) prevTime = p.time || p.timestamp; 
+                // Lógica de Ciclos
+                if (i === 0) prevTime = t; 
                 let vue = p.vue || p.vueltas || 0;
                 
                 if (vue > totalCiclos) {
                     totalCiclos = vue;
                     if (prevTime) {
-                        let diffMs = (p.time || p.timestamp) - prevTime;
+                        let diffMs = t - prevTime;
                         let min = Math.floor(diffMs / 60000);
                         let sec = Math.floor((diffMs % 60000) / 1000);
                         cicloTiempos.push(`L${vue}: ${min}m ${sec}s`);
                     }
-                    prevTime = p.time || p.timestamp;
+                    prevTime = t;
                 }
 
-                // 3. Lógica de Distancia y Velocidad parcheada
+                let lat2 = p.lat || p.latitude || p.latitud;
+                let lon2 = p.lng || p.longitude || p.longitud;
+
+                // Lógica Inteligente de Zonas (Anti-Rebote)
+                let detectadoEn = null;
+                if(lat2 && lon2) {
+                    for(let nomZona in zonasAmpliadas) {
+                        if(estaAdentro(lat2, lon2, zonasAmpliadas[nomZona])) { detectadoEn = nomZona; break; }
+                    }
+                }
+
+                if (detectadoEn) {
+                    if (zonaActual === detectadoEn) {
+                        ultimoVistoEnZona = t;
+                    } else {
+                        if (zonaActual) {
+                            let mins = Math.floor((ultimoVistoEnZona - entradaZona) / 60000);
+                            if (mins >= 3) desgloseZonas[zonaActual] = (desgloseZonas[zonaActual] || 0) + mins;
+                        }
+                        zonaActual = detectadoEn;
+                        entradaZona = t;
+                        ultimoVistoEnZona = t;
+                    }
+                } else {
+                    if (zonaActual) {
+                        // Tolerancia de 2 minutos de rebote (120000 ms). Si pasa más de eso afuera, cortamos el ciclo.
+                        if (t - ultimoVistoEnZona > 120000) { 
+                            let mins = Math.floor((ultimoVistoEnZona - entradaZona) / 60000);
+                            if (mins >= 3) desgloseZonas[zonaActual] = (desgloseZonas[zonaActual] || 0) + mins;
+                            zonaActual = null;
+                        }
+                    }
+                }
+
+                // Lógica de Distancia y Velocidad
                 if (i > 0) {
                     let p1 = pts[i-1];
                     let lat1 = p1.lat || p1.latitude || p1.latitud;
                     let lon1 = p1.lng || p1.longitude || p1.longitud;
-                    let lat2 = p.lat || p.latitude || p.latitud;
-                    let lon2 = p.lng || p.longitude || p.longitud;
                     
                     if (lat1 && lon1 && lat2 && lon2) {
                         km += calcularDistanciaGPS(lat1, lon1, lat2, lon2);
@@ -273,47 +430,35 @@ window.exportarExcel = async function() {
                     ptsValidos++;
                     
                     if (v <= 2) { 
-                        let diffMs = (p.time||p.timestamp||0) - (p1.time||p1.timestamp||0);
+                        let diffMs = (t||0) - (p1.time||p1.timestamp||0);
                         if (diffMs > 0 && diffMs < 300000) minDetenido += (diffMs / 60000);
                     }
                 }
             }
+            
+            // Si terminó el día adentro de la zona
+            if(zonaActual) {
+                let mins = Math.floor((ultimoVistoEnZona - entradaZona) / 60000);
+                if(mins >= 3) desgloseZonas[zonaActual] = (desgloseZonas[zonaActual] || 0) + mins;
+            }
         }
+        
         let prom = ptsValidos > 0 ? (velSuma / ptsValidos) : 0;
+        let totalMinutosZonas = 0;
+        let zonasArr = [];
+        for(let z in desgloseZonas) {
+            totalMinutosZonas += desgloseZonas[z];
+            zonasArr.push(`${z} (${desgloseZonas[z]}m)`);
+        }
+
         return { 
             km: km.toFixed(2), 
             prom: prom.toFixed(1), 
             detenido: Math.floor(minDetenido),
             ciclos: totalCiclos,
-            detalleCiclos: cicloTiempos.length > 0 ? cicloTiempos.join(" | ") : "N/A"
-        };
-    }
-
-    async function obtenerTiemposMuertos(placa) {
-        let snap = await db.ref('tiempos_muertos/' + placa).once('value');
-        let data = snap.val();
-        if (!data) return { zonas: 'Ninguna', minutosTotales: 0 };
-
-        let totalMinutos = 0;
-        let desgloseZonas = {};
-        
-        for (let pushId in data) {
-            let info = data[pushId];
-            let mins = info.minutos_gastados || 0;
-            let zona = info.zona || 'Desconocida';
-            
-            totalMinutos += mins;
-            desgloseZonas[zona] = (desgloseZonas[zona] || 0) + mins;
-        }
-        
-        let zonasArr = [];
-        for (let zona in desgloseZonas) {
-            zonasArr.push(`${zona} (${desgloseZonas[zona]}m)`);
-        }
-        
-        return { 
-            zonas: zonasArr.length > 0 ? zonasArr.join(' | ') : 'Ninguna', 
-            minutosTotales: totalMinutos 
+            detalleCiclos: cicloTiempos.length > 0 ? cicloTiempos.join(" | ") : "N/A",
+            zonasStr: zonasArr.length > 0 ? zonasArr.join(' | ') : 'Ninguna',
+            minutosTotalesZonas: totalMinutosZonas
         };
     }
 
@@ -324,8 +469,7 @@ window.exportarExcel = async function() {
         let minTT = aplicaTT ? Math.floor((Date.now() - (u.hora_ingreso||Date.now())) / 60000) : 'N/A';
         let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
         let kpis = await analizarRuta(placa); 
-        let tiempos = await obtenerTiemposMuertos(placa);
-        csv += `${placa},${turnoActual},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},ACTIVO,${tiempos.zonas},${tiempos.minutosTotales}\n`;
+        csv += `${placa},${turnoActual},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},ACTIVO,${kpis.zonasStr},${kpis.minutosTotalesZonas}\n`;
     }
     
     const snapFin = await db.ref(`viajes_finalizados/${fechaHoy}`).once('value');
@@ -340,8 +484,7 @@ window.exportarExcel = async function() {
             let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
             let horaOut = u.hora_salida ? new Date(u.hora_salida).toLocaleTimeString() : 'N/A';
             let kpis = await analizarRuta(placaFin); 
-            let tiempos = await obtenerTiemposMuertos(placaFin);
-            csv += `${placaFin},${turnoFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},FINALIZADO,${tiempos.zonas},${tiempos.minutosTotales}\n`;
+            csv += `${placaFin},${turnoFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},FINALIZADO,${kpis.zonasStr},${kpis.minutosTotalesZonas}\n`;
         }
     }
     const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
