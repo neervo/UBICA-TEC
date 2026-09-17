@@ -69,6 +69,125 @@ function showToast(mensaje) {
 // ==========================================
 // DASHBOARD Y EXCEL
 // ==========================================
+function escucharTiemposMuertos() {
+    db.ref('tiempos_muertos').on('value', snapshot => {
+        const contenedor = document.getElementById('contenedorTurnosMuertos');
+        if (!contenedor) return;
+        contenedor.innerHTML = '';
+
+        if (!snapshot.exists() || !snapshot.val()) {
+            contenedor.innerHTML = '<div style="text-align:center; padding: 10px; color: #666;">Sin incidencias</div>';
+            return;
+        }
+
+        const data = snapshot.val();
+        let turnosData = {
+            'Turno 1': { registros: [], totalIncidencias: 0, totalMinutos: 0 },
+            'Turno 2': { registros: [], totalIncidencias: 0, totalMinutos: 0 },
+            'Turno 3': { registros: [], totalIncidencias: 0, totalMinutos: 0 }
+        };
+
+        const inicioDelDia = new Date();
+        inicioDelDia.setHours(0, 0, 0, 0);
+        const timestampInicio = inicioDelDia.getTime();
+
+        for (const placa in data) {
+            const incidentesPlaca = data[placa];
+            for (const pushId in incidentesPlaca) {
+                const info = incidentesPlaca[pushId];
+                if (info.hora_salida >= timestampInicio) {
+                    let horaSalida = info.hora_salida || 0;
+                    let mins = info.minutos_gastados || 0;
+                    
+                    let hora = new Date(horaSalida).getHours();
+                    let turno = 'Turno 3';
+                    if (hora >= 8 && hora < 16) turno = 'Turno 1';
+                    else if (hora >= 16 && hora < 24) turno = 'Turno 2';
+
+                    turnosData[turno].registros.push({
+                        placa: placa,
+                        zona: info.zona || 'Desconocida',
+                        minutos_gastados: mins,
+                        hora_salida: horaSalida
+                    });
+                    turnosData[turno].totalIncidencias++;
+                    turnosData[turno].totalMinutos += mins;
+                }
+            }
+        }
+
+        let currentHour = new Date().getHours();
+        let currentTurno = 'Turno 3';
+        if (currentHour >= 8 && currentHour < 16) currentTurno = 'Turno 1';
+        else if (currentHour >= 16 && currentHour < 24) currentTurno = 'Turno 2';
+
+        let html = '';
+        let hasData = false;
+
+        ['Turno 1', 'Turno 2', 'Turno 3'].forEach(turnoName => {
+            let tData = turnosData[turnoName];
+            if (tData.totalIncidencias === 0) return;
+            hasData = true;
+
+            tData.registros.sort((a, b) => b.hora_salida - a.hora_salida);
+            let isOpen = (turnoName === currentTurno) ? 'open' : '';
+
+            let detailsHtml = `
+                <details style="background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden;" ${isOpen}>
+                    <summary style="background: #f9fafb; padding: 12px 15px; font-weight: bold; cursor: pointer; color: #374151; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between;">
+                        <span>${turnoName} - Incidencias: ${tData.totalIncidencias} | Tiempo Perdido: ${tData.totalMinutos} min</span>
+                        <span style="color: #9ca3af;">▼</span>
+                    </summary>
+                    <div style="padding: 10px;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+                            <thead style="color: var(--text-secondary); border-bottom: 1px solid #eee;">
+                                <tr>
+                                    <th style="padding: 6px;">Unidad</th>
+                                    <th style="padding: 6px;">Zona</th>
+                                    <th style="padding: 6px;">Minutos</th>
+                                    <th style="padding: 6px;">Hora</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            tData.registros.forEach(reg => {
+                let colorMinutos = 'var(--text-primary)';
+                if (reg.minutos_gastados >= 15) colorMinutos = '#7f1d1d';
+                else if (reg.minutos_gastados >= 5) colorMinutos = '#ef4444';
+
+                let fecha = new Date(reg.hora_salida);
+                let horas = fecha.getHours().toString().padStart(2, '0');
+                let mins = fecha.getMinutes().toString().padStart(2, '0');
+                let horaLegible = `${horas}:${mins}`;
+
+                detailsHtml += `
+                                <tr style="border-bottom: 1px solid #f3f4f6;">
+                                    <td style="padding: 6px; font-weight: bold;">${reg.placa}</td>
+                                    <td style="padding: 6px;">${reg.zona}</td>
+                                    <td style="padding: 6px; color: ${colorMinutos}; font-weight: bold;">${reg.minutos_gastados}m</td>
+                                    <td style="padding: 6px;">${horaLegible}</td>
+                                </tr>
+                `;
+            });
+
+            detailsHtml += `
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+            `;
+            html += detailsHtml;
+        });
+
+        if (!hasData) {
+            contenedor.innerHTML = '<div style="text-align:center; padding: 10px; color: #666;">Sin incidencias</div>';
+        } else {
+            contenedor.innerHTML = html;
+        }
+    });
+}
+
 window.onload = () => {
     const ctx = document.getElementById('graficaFlota').getContext('2d');
     chartFlota = new Chart(ctx, {
@@ -76,6 +195,7 @@ window.onload = () => {
         data: { labels: ['Activos', 'Ocio', 'Baño', 'Pager', 'Emergencia'], datasets: [{ data: [0, 0, 0, 0, 0], backgroundColor: ['#a4c900', '#ba68c8', '#fbc02d', '#f57f17', '#ba1a1a'], borderWidth: 0 }] },
         options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'right', labels: { font: { family: 'Plus Jakarta Sans', size: 11, weight: 'bold' } } } } }
     });
+    escucharTiemposMuertos();
 };
 
 window.cambiarTab = function(tabName) {
@@ -86,10 +206,18 @@ window.cambiarTab = function(tabName) {
 };
 
 window.exportarExcel = async function() {
+    function calcularTurno(timestamp) {
+        if (!timestamp) return 'N/A';
+        const hora = new Date(timestamp).getHours();
+        if (hora >= 8 && hora < 16) return 'Turno 1';
+        if (hora >= 16 && hora < 24) return 'Turno 2';
+        return 'Turno 3'; // De 00:00 a 07:59
+    }
+
     showToast("Procesando telemetría... Espere un momento.");
     const fechaHoy = obtenerFechaLocal();
-    // 1. Agregamos las columnas de Ciclos al encabezado
-    let csv = "Placa,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Total Ciclos,Detalle de Ciclos,Estatus\n";
+    // 1. Agregamos las columnas de Ciclos y Turno al encabezado
+    let csv = "Placa,Turno,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Total Ciclos,Detalle de Ciclos,Estatus,Zonas Restringidas,Minutos en Zonas\n";
     
     async function analizarRuta(placa) {
         let km = 0, velSuma = 0, minDetenido = 0, ptsValidos = 0;
@@ -161,13 +289,43 @@ window.exportarExcel = async function() {
         };
     }
 
+    async function obtenerTiemposMuertos(placa) {
+        let snap = await db.ref('tiempos_muertos/' + placa).once('value');
+        let data = snap.val();
+        if (!data) return { zonas: 'Ninguna', minutosTotales: 0 };
+
+        let totalMinutos = 0;
+        let desgloseZonas = {};
+        
+        for (let pushId in data) {
+            let info = data[pushId];
+            let mins = info.minutos_gastados || 0;
+            let zona = info.zona || 'Desconocida';
+            
+            totalMinutos += mins;
+            desgloseZonas[zona] = (desgloseZonas[zona] || 0) + mins;
+        }
+        
+        let zonasArr = [];
+        for (let zona in desgloseZonas) {
+            zonasArr.push(`${zona} (${desgloseZonas[zona]}m)`);
+        }
+        
+        return { 
+            zonas: zonasArr.length > 0 ? zonasArr.join(' | ') : 'Ninguna', 
+            minutosTotales: totalMinutos 
+        };
+    }
+
     for (let placa in dataGlobal) {
         let u = dataGlobal[placa]; 
+        let turnoActual = calcularTurno(u.hora_ingreso || Date.now());
         let aplicaTT = (u.tipo === 'FORANEO' || (u.tipo === 'INTERNO' && u.subtipo === 'Traslado'));
         let minTT = aplicaTT ? Math.floor((Date.now() - (u.hora_ingreso||Date.now())) / 60000) : 'N/A';
         let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
         let kpis = await analizarRuta(placa); 
-        csv += `${placa},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},ACTIVO\n`;
+        let tiempos = await obtenerTiemposMuertos(placa);
+        csv += `${placa},${turnoActual},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},ACTIVO,${tiempos.zonas},${tiempos.minutosTotales}\n`;
     }
     
     const snapFin = await db.ref(`viajes_finalizados/${fechaHoy}`).once('value');
@@ -176,12 +334,14 @@ window.exportarExcel = async function() {
         for (let key in finalizados) {
             let u = finalizados[key];
             let placaFin = u.placa || key.split('_')[0];
+            let turnoFin = calcularTurno(u.hora_salida || u.hora_ingreso);
             let aplicaTT = (u.tipo === 'FORANEO' || (u.tipo === 'INTERNO' && u.subtipo === 'Traslado'));
             let minTT = aplicaTT ? (u.minutos_totales || 0) : 'N/A';
             let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
             let horaOut = u.hora_salida ? new Date(u.hora_salida).toLocaleTimeString() : 'N/A';
             let kpis = await analizarRuta(placaFin); 
-            csv += `${placaFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},FINALIZADO\n`;
+            let tiempos = await obtenerTiemposMuertos(placaFin);
+            csv += `${placaFin},${turnoFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},FINALIZADO,${tiempos.zonas},${tiempos.minutosTotales}\n`;
         }
     }
     const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
@@ -677,7 +837,7 @@ function purgarHistorialAntiguo() {
         fechasRegistradas.forEach(fechaStr => {
             const fechaCarpeta = new Date(fechaStr);
             const diferenciaDias = Math.floor((hoy - fechaCarpeta) / (1000 * 60 * 60 * 24));
-            if (diferenciaDias > 3) db.ref(`historial_rutas/${fechaStr}`).remove();
+            if (diferenciaDias > 7) db.ref(`historial_rutas/${fechaStr}`).remove();
         });
     });
 }
