@@ -30,14 +30,53 @@ function calcularDistanciaGPS(lat1, lon1, lat2, lon2) {
 // ==========================================
 // LÓGICA DE LOGIN Y MODALES
 // ==========================================
+const poligonosOperativos = {
+    "MODULO 1": [
+        [19.066921, -104.291389],
+        [19.066931, -104.291920],
+        [19.067985, -104.291668],
+        [19.067869, -104.291196]
+    ],
+    "MODULO 2": [
+        [19.071733, -104.290488],
+        [19.070780, -104.290684],
+        [19.070872, -104.291175],
+        [19.071817, -104.290992]
+    ],
+    "MODULO 3": [
+        [19.075130, -104.290394],
+        [19.075049, -104.290019],
+        [19.074202, -104.290142],
+        [19.074276, -104.290585]
+    ]
+};
+
+const poligonosZonas = {
+    "Baño 1": [[19.072129, -104.290118], [19.072159, -104.290300], [19.073574, -104.289874], [19.073599, -104.290034]],
+    "Baño 3": [[19.069170, -104.289114], [19.069358, -104.289072], [19.069396, -104.289383], [19.069247, -104.289412]],
+    "Antifatiga": [[19.064929, -104.290659], [19.065112, -104.290780], [19.064927, -104.291228], [19.064785, -104.291150]],
+    "Gas": [[19.069574, -104.289190], [19.069411, -104.289235], [19.069472, -104.289522], [19.069662, -104.289493]]
+};
+
+function estaDentroDelPoligono(lat, lng, poligono) {
+    let x = parseFloat(lat), y = parseFloat(lng), adentro = false;
+    if (isNaN(x) || isNaN(y)) return false;
+    
+    for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
+        let xi = parseFloat(poligono[i][0]), yi = parseFloat(poligono[i][1]);
+        let xj = parseFloat(poligono[j][0]), yj = parseFloat(poligono[j][1]);
+        let interseccion = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (interseccion) adentro = !adentro;
+    }
+    return adentro;
+}
+
 function iniciarSesionTorre() {
     let user = document.getElementById('loginUser').value;
     let pass = document.getElementById('loginPass').value;
-    if(user === "admin" && pass === "admin123") {
-        document.getElementById('pantallaLoginAdmin').style.display = 'none';
-    } else {
-        alert("Usuario o contraseña incorrectos.");
-    }
+    firebase.auth().signInWithEmailAndPassword(user, pass)
+        .then(() => { document.getElementById('pantallaLoginAdmin').style.display = 'none'; })
+        .catch(e => { alert("Credenciales incorrectas."); });
 }
 
 function mostrarModal(titulo, texto, tipo = 'alert', placeholder = '') {
@@ -339,16 +378,21 @@ window.exportarExcel = async function() {
 
     showToast("Procesando telemetría... Espere un momento.");
     const fechaHoy = obtenerFechaLocal();
-    let csv = "Placa,Turno,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Total Ciclos,Detalle de Ciclos,Estatus,Zonas Restringidas,Minutos en Zonas\n";
+    let csv = "Placa,Turno,Tipo,Subtipo,Estado,Destino/Buque,STS,Hora Ingreso,Hora Salida,Truck Time Min,Km Recorridos,Vel Promedio (km/h),Minutos Detenido,Total Laps,Detalle de Laps,Estatus,Zonas Restringidas,Minutos en Zonas\n";
     
     async function analizarRuta(placa) {
         let km = 0, velSuma = 0, minDetenido = 0, ptsValidos = 0;
-        let totalCiclos = 0, cicloTiempos = [], prevTime = null;
         
         let desgloseZonas = {};
         let zonaActual = null;
         let entradaZona = null;
         let ultimoVistoEnZona = null;
+
+        let estadoAdentro = false;
+        let lapsCompletadas = 0;
+        let tiemposCiclos = [];
+        let tiempoUltimaSalida = null;
+        const MIN_TIEMPO_FUERA_MS = 150000; // 2.5 minutos
 
         let snap = await db.ref(`historial_rutas/${fechaHoy}/${placa}`).once('value');
         let data = snap.val();
@@ -364,25 +408,41 @@ window.exportarExcel = async function() {
             
             for (let i = 0; i < pts.length; i++) {
                 let p = pts[i];
-                let t = p.time || p.timestamp;
+                let lat2 = parseFloat(p.lat || p.latitude || p.latitud);
+                let lon2 = parseFloat(p.lng || p.longitude || p.longitud);
+                let timeActual = parseInt(p.time || p.timestamp || 0);
                 
-                // Lógica de Ciclos
-                if (i === 0) prevTime = t; 
-                let vue = p.vue || p.vueltas || 0;
+                if (isNaN(lat2) || isNaN(lon2) || !timeActual) continue;
                 
-                if (vue > totalCiclos) {
-                    totalCiclos = vue;
-                    if (prevTime) {
-                        let diffMs = t - prevTime;
-                        let min = Math.floor(diffMs / 60000);
-                        let sec = Math.floor((diffMs % 60000) / 1000);
-                        cicloTiempos.push(`L${vue}: ${min}m ${sec}s`);
+                let t = timeActual; // Para la otra logica
+
+                let adentroAhora = false;
+                for (let mod in poligonosOperativos) {
+                    if (estaDentroDelPoligono(lat2, lon2, poligonosOperativos[mod])) {
+                        adentroAhora = true;
+                        break;
                     }
-                    prevTime = t;
                 }
 
-                let lat2 = p.lat || p.latitude || p.latitud;
-                let lon2 = p.lng || p.longitude || p.longitud;
+                if (adentroAhora && !estadoAdentro) {
+                    // El camión acaba de ENTRAR
+                    if (tiempoUltimaSalida !== null) {
+                        let diffMs = timeActual - tiempoUltimaSalida;
+                        if (diffMs >= MIN_TIEMPO_FUERA_MS) {
+                            // VIAJE VÁLIDO COMPLETADO
+                            lapsCompletadas++;
+                            let min = Math.floor(diffMs / 60000);
+                            let sec = Math.floor((diffMs % 60000) / 1000);
+                            tiemposCiclos.push("L" + lapsCompletadas + " (Viaje: " + min + "m " + sec + "s)");
+                        }
+                    }
+                    estadoAdentro = true; 
+                    
+                } else if (!adentroAhora && estadoAdentro) {
+                    // El camión acaba de SALIR
+                    tiempoUltimaSalida = timeActual;
+                    estadoAdentro = false;
+                }
 
                 // Lógica Inteligente de Zonas (Anti-Rebote)
                 let detectadoEn = null;
@@ -455,8 +515,8 @@ window.exportarExcel = async function() {
             km: km.toFixed(2), 
             prom: prom.toFixed(1), 
             detenido: Math.floor(minDetenido),
-            ciclos: totalCiclos,
-            detalleCiclos: cicloTiempos.length > 0 ? cicloTiempos.join(" | ") : "N/A",
+            laps: lapsCompletadas,
+            detalleCiclos: tiemposCiclos.length > 0 ? tiemposCiclos.join(' | ') : 'N/A',
             zonasStr: zonasArr.length > 0 ? zonasArr.join(' | ') : 'Ninguna',
             minutosTotalesZonas: totalMinutosZonas
         };
@@ -469,7 +529,7 @@ window.exportarExcel = async function() {
         let minTT = aplicaTT ? Math.floor((Date.now() - (u.hora_ingreso||Date.now())) / 60000) : 'N/A';
         let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
         let kpis = await analizarRuta(placa); 
-        csv += `${placa},${turnoActual},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},ACTIVO,${kpis.zonasStr},${kpis.minutosTotalesZonas}\n`;
+        csv += `${placa},${turnoActual},${u.tipo},${u.subtipo || 'N/A'},${u.estado},${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},EN RUTA,${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.laps},${kpis.detalleCiclos},ACTIVO,${kpis.zonasStr},${kpis.minutosTotalesZonas}\n`;
     }
     
     const snapFin = await db.ref(`viajes_finalizados/${fechaHoy}`).once('value');
@@ -484,7 +544,7 @@ window.exportarExcel = async function() {
             let horaIn = u.hora_ingreso ? new Date(u.hora_ingreso).toLocaleTimeString() : 'N/A';
             let horaOut = u.hora_salida ? new Date(u.hora_salida).toLocaleTimeString() : 'N/A';
             let kpis = await analizarRuta(placaFin); 
-            csv += `${placaFin},${turnoFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.ciclos},${kpis.detalleCiclos},FINALIZADO,${kpis.zonasStr},${kpis.minutosTotalesZonas}\n`;
+            csv += `${placaFin},${turnoFin},${u.tipo},${u.subtipo || 'N/A'},COMPLETADO,${u.destino || u.buque || 'S/D'},${u.sts || 'N/A'},${horaIn},${horaOut},${minTT},${kpis.km},${kpis.prom},${kpis.detenido},${kpis.laps},${kpis.detalleCiclos},FINALIZADO,${kpis.zonasStr},${kpis.minutosTotalesZonas}\n`;
         }
     }
     const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
@@ -702,6 +762,33 @@ function procesarDatosHistorial(val) {
         return mostrarModal("Vacío", "Los registros encontrados están vacíos o corruptos.");
     }
     
+    let estadoAdentroMapa = false;
+    let lapsCompletadasMapa = 0;
+    let tiempoUltimaSalidaMapa = null;
+
+    datosHistorial.forEach(p => {
+        let adentroMapaAhora = false;
+        for (let mod in poligonosOperativos) {
+            if (estaDentroDelPoligono(p.lat, p.lng, poligonosOperativos[mod])) {
+                adentroMapaAhora = true;
+                break;
+            }
+        }
+
+        if (adentroMapaAhora && !estadoAdentroMapa) {
+            if (tiempoUltimaSalidaMapa !== null) {
+                if ((p.time - tiempoUltimaSalidaMapa) >= 150000) { 
+                    lapsCompletadasMapa++;
+                }
+            }
+            estadoAdentroMapa = true;
+        } else if (!adentroMapaAhora && estadoAdentroMapa) {
+            tiempoUltimaSalidaMapa = p.time;
+            estadoAdentroMapa = false;
+        }
+        p.lap = lapsCompletadasMapa; 
+    });
+    
     document.getElementById('sliderRep').max = datosHistorial.length - 1; 
     document.getElementById('sliderRep').value = 0; 
     
@@ -877,25 +964,28 @@ function dibujarLineaHistorial() {
     mapa.fitBounds(polylineHistorial.getBounds(), {padding: [50, 50]}); 
     const ghostIcon = L.divIcon({ className: '', html: `<div class="icono-base icono-fantasma"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] }); 
     marcadorHistorial = L.marker(ptos[0], {icon: ghostIcon, zIndexOffset: 1000}).addTo(mapa); 
-    
-    let vueltaActual = 0;
-    for (let i = 0; i < datosHistorial.length; i++) {
-        if (datosHistorial[i].vue > vueltaActual) {
-            vueltaActual = datosHistorial[i].vue;
-            const iconoMeta = L.divIcon({ className: '', html: `<div style="font-size:24px; text-shadow: 0 0 8px #000;">🏁</div>`, iconSize: [24, 24], iconAnchor: [12,24] });
-            let metaMarker = L.marker([datosHistorial[i].lat, datosHistorial[i].lng], {icon: iconoMeta, zIndexOffset: 900}).addTo(mapa).bindTooltip(`Lap ${vueltaActual}`, {permanent: true, direction: 'top', className: 'geo-tooltip'});
-            marcadoresTiempoMuerto.push(metaMarker);
-        }
-    }
 }
 
 window.actualizarDatosSlider = function(index) { 
     if(datosHistorial.length === 0) return; 
     const punto = datosHistorial[index]; 
+    
+    // 1. Crear el icono dinámico con el número de Lap adentro
+    let textoLap = punto.lap > 0 ? "L" + punto.lap : "-";
+    const ghostIcon = L.divIcon({ 
+        className: '', 
+        html: `<div style="background-color: white; border: 2px solid var(--primary); border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 900; color: #1d1c15; box-shadow: 0 2px 5px rgba(0,0,0,0.4);">${textoLap}</div>`, 
+        iconSize: [26, 26], 
+        iconAnchor: [13, 13] 
+    });
+    
     marcadorHistorial.setLatLng([punto.lat, punto.lng]); 
+    marcadorHistorial.setIcon(ghostIcon); // Actualiza la UI del punto móvil
+
+    // 2. Actualizar el panel de texto
     document.getElementById('repInfoHora').innerText = new Date(punto.time).toLocaleTimeString(); 
     document.getElementById('repInfoVel').innerText = parseFloat(punto.vel).toFixed(1) + " km/h"; 
-    document.getElementById('repInfoEst').innerText = punto.est.toUpperCase(); 
+    document.getElementById('repInfoEst').innerHTML = punto.est.toUpperCase() + ` <strong style="color: var(--primary); margin-left: 5px;">[${textoLap}]</strong>`; 
 
     indexRastreador = index;
     if (chartVelocidad) chartVelocidad.update('none'); 
